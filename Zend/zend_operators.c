@@ -1967,6 +1967,96 @@ ZEND_API int ZEND_FASTCALL compare_function(zval *result, zval *op1, zval *op2) 
 }
 /* }}} */
 
+ZEND_API int ZEND_FASTCALL range_function(zval *result, zval *op1, zval *op2) /* {{{ */
+{
+	zval tmp;
+
+	if (Z_TYPE_P(op1) == IS_LONG && Z_TYPE_P(op2) == IS_LONG) {
+        zend_long min = Z_LVAL_P(op1), max = Z_LVAL_P(op2);
+		zend_ulong size, i;
+
+		if (min > max) {
+		    zend_throw_error(NULL, "Min should be less than (or equal to) max");
+		    return FAILURE;
+		}
+
+		// calculate size (one less than the total size for an inclusive range)
+		size = max - min;
+
+		// the size cannot be greater than or equal to HT_MAX_SIZE
+		// HT_MAX_SIZE - 1 takes into account the inclusive range size
+		if (size >= HT_MAX_SIZE - 1) {
+		    zend_throw_error(NULL, "Range size is too large");
+		    return FAILURE;
+		}
+
+		// increment the size to take into account the inclusive range
+		++size;
+
+		// set the zval type to be a long
+		Z_TYPE_INFO(tmp) = IS_LONG;
+
+		// initialise the array to a given size
+		array_init_size(result, size);
+		zend_hash_real_init(Z_ARRVAL_P(result), 1);
+		ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(result)) {
+		    for (i = 0; i < size; ++i) {
+		        Z_LVAL(tmp) = min + i;
+		        ZEND_HASH_FILL_ADD(&tmp);
+		    }
+		} ZEND_HASH_FILL_END();
+    } else if ( // if both operands are either integers or doubles
+        (Z_TYPE_P(op1) == IS_LONG || Z_TYPE_P(op1) == IS_DOUBLE)
+        && (Z_TYPE_P(op2) == IS_LONG || Z_TYPE_P(op2) == IS_DOUBLE)
+    ) {
+        long double min, max, size, i;
+
+		if (Z_TYPE_P(op1) == IS_LONG) {
+		    min = (long double) Z_LVAL_P(op1);
+		    max = (long double) Z_DVAL_P(op2);
+		} else if (Z_TYPE_P(op2) == IS_LONG) {
+		    min = (long double) Z_DVAL_P(op1);
+		    max = (long double) Z_LVAL_P(op2);
+		} else {
+		    min = (long double) Z_DVAL_P(op1);
+		    max = (long double) Z_DVAL_P(op2);
+		}
+
+		if (min > max) {
+		    zend_throw_error(NULL, "Min should be less than (or equal to) max");
+		    return FAILURE;
+		}
+
+		size = max - min;
+
+		if (size >= HT_MAX_SIZE - 1) {
+		    zend_throw_error(NULL, "Range size is too large");
+		    return FAILURE;
+		}
+
+		// we cast the size to an integer to get rid of the decimal places,
+		// since we only care about whole number sizes
+		size = (int) size + 1;
+
+		Z_TYPE_INFO(tmp) = IS_DOUBLE;
+
+		array_init_size(result, size);
+		zend_hash_real_init(Z_ARRVAL_P(result), 1);
+		ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(result)) {
+		    for (i = 0; i < size; ++i) {
+		        Z_DVAL(tmp) = min + i;
+		        ZEND_HASH_FILL_ADD(&tmp);
+		    }
+		} ZEND_HASH_FILL_END();
+    } else {
+        zend_throw_error(NULL, "Unsupported operand types - only ints and floats are supported");
+		return FAILURE;
+    }
+
+    return SUCCESS;
+}
+/* }}} */
+
 static int hash_zval_identical_function(zval *z1, zval *z2) /* {{{ */
 {
 	zval result;

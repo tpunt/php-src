@@ -8114,3 +8114,18 @@ ZEND_VM_C_LABEL(call_trampoline_end):
 }
 
 ZEND_VM_DEFINE_OP(137, ZEND_OP_DATA);
+
+ZEND_VM_HANDLER(182, ZEND_RANGE, CONST|TMPVAR|CV, CONST|TMPVAR|CV)
+{
+	USE_OPLINE
+	zend_free_op free_op1, free_op2;
+	zval *op1, *op2;
+
+	SAVE_OPLINE();
+	op1 = GET_OP1_ZVAL_PTR(BP_VAR_R);
+	op2 = GET_OP2_ZVAL_PTR(BP_VAR_R);
+	range_function(EX_VAR(opline->result.var), op1, op2);
+	FREE_OP1();
+	FREE_OP2();
+	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
+}

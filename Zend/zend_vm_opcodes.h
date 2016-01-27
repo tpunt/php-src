@@ -238,7 +238,8 @@ END_EXTERN_C()
 #define ZEND_UNSET_STATIC_PROP               179
 #define ZEND_ISSET_ISEMPTY_STATIC_PROP       180
 #define ZEND_FETCH_CLASS_CONSTANT            181
+#define ZEND_RANGE                           182
 
-#define ZEND_VM_LAST_OPCODE                  181
+#define ZEND_VM_LAST_OPCODE                  182
 
 #endif
