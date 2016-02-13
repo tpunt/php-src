@@ -390,7 +390,7 @@ static uint32_t zend_vm_opcodes_flags[183] = {
 	0x00000307,
 	0x10000307,
 	0x00000303,
-	0x00000707,
+	0x00000303,
 };
 
 ZEND_API const char* zend_get_opcode_name(zend_uchar opcode) {
