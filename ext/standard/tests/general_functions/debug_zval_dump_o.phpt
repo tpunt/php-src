@@ -23,7 +23,7 @@ function zval_dump( $values ) {
 /* checking on objects type */
 echo "*** Testing debug_zval_dump() on objects ***\n";
 class object_class {
-  var $value1 = 1;
+  public $value1 = 1;
   private $value2 = 10;
   protected $value3 = 20;
   public $value4 = 30;
@@ -52,14 +52,14 @@ class no_member_class{
 /* class with member as object of other class */
 class contains_object_class
 {
-   var       $p = 30;
+   public       $p = 30;
    protected $p1 = 40;
    private   $p2 = 50;
-   var       $class_object1;
+   public       $class_object1;
    public    $class_object2;
    private   $class_object3;
    protected $class_object4;
-   var       $no_member_class_object;
+   public       $no_member_class_object;
 
    public function func() {
      echo "func() is called \n";

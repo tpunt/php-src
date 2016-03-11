@@ -68,7 +68,7 @@ unset ($unset_var);
 // non_scalar values, objects, arrays, resources and boolean 
 class foo
 {
-  var $array = array(10.5);
+  public $array = array(10.5);
 };
 $object = new foo();
 

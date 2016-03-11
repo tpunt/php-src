@@ -3,7 +3,7 @@ SPL: Bug #70366 use-after-free vulnerability in unserialize() with SplDoublyLink
 --FILE--
 <?php
 class obj {
-	var $ryat;
+	public $ryat;
 	function __wakeup() {
 		$this->ryat = 1;
 	}

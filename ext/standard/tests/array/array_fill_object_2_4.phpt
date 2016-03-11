@@ -30,8 +30,8 @@ class Test1
   const test1_constant = "test1";
   public static $test1_static = 0;
   public $member1;
-  var $var1 = 30;
-  var $var2;
+  public $var1 = 30;
+  public $var2;
 
   function __construct($value1 , $value2)
   {
@@ -58,8 +58,8 @@ class Test2
   const test2_constant = "test2";
   public static $test2_static = 0;
   private $member1;
-  var $var1 = 30;
-  var $var2;
+  public $var1 = 30;
+  public $var2;
 
   function __construct($value1 , $value2)
   {
@@ -86,8 +86,8 @@ class Test3
   const test3_constant = "test3";
   public static $test3_static = 0;
   protected $member1;
-  var $var1 = 30;
-  var $var2; 
+  public $var1 = 30;
+  public $var2; 
 
   function __construct($value1 , $value2)
   {
@@ -128,7 +128,7 @@ class Test4
 // child class which inherits parent class test4
 class Child_test4 extends Test4
 {
-  var $var1;
+  public $var1;
   
   function __construct($value1 , $value2 , $value3 , $value4)
   {
@@ -143,7 +143,7 @@ abstract class AbstractClass
   public $member1;
   private $member2;
   protected $member3;
-  var $var1 = 30;
+  public $var1 = 30;
   
   abstract protected function display();
 }

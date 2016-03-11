@@ -16,8 +16,8 @@ $boolean = TRUE; //boolean
 
 /* Checking for Class and Objects */
 class sample {
-var $number = 233;
-var $string = "string2";
+public $number = 233;
+public $string = "string2";
 public function func() {
 $local_var = 2;
 var_dump( get_defined_vars() );

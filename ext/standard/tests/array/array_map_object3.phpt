@@ -31,7 +31,7 @@ class ParentClass
 
 class ChildClass extends ParentClass 
 {
-  var $parent_obj;
+  public $parent_obj;
   public function __construct ( ) {
     $this->parent_obj = new ParentClass();
   }

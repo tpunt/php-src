@@ -6,7 +6,7 @@ error_reporting=E_ALL
 <?php 
 
 class TestX {
-  var $i;
+  public $i;
 
   function __construct($i) {
     $this->i = $i;
@@ -14,8 +14,8 @@ class TestX {
 }
 
 class TestY {
-  var $A = array();
-  var $B;
+  public $A = array();
+  public $B;
 
   function __construct() {
     $this->A[1] = new TestX(1);

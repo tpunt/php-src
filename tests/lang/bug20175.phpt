@@ -93,7 +93,7 @@ function wow_static() {
  */
 $oop_global = 0;
 class oop_class {
-	var $oop_name;
+	public $oop_name;
 	
 	function __construct() {
 		global $oop_global;

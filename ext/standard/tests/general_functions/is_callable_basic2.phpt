@@ -65,7 +65,7 @@ class no_member_class {
 class contains_object_class
 {
    public    $class_object1;
-   var       $no_member_class_object;
+   public       $no_member_class_object;
 
    public function func() {
      echo "func() is called \n";

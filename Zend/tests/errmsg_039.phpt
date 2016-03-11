@@ -4,8 +4,8 @@ errmsg: cannot redeclare property
 <?php
 
 class test {
-	var $var;
-	var $var;
+	public $var;
+	public $var;
 }
 
 echo "Done\n";

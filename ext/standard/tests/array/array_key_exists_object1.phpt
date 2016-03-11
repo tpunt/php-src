@@ -15,9 +15,9 @@ Test array_key_exists() function : object functionality
 echo "*** Testing array_key_exists() : object functionality ***\n";
 
 class myClass {
-	var $var1;
-	var $var2;
-	var $var3;
+	public $var1;
+	public $var2;
+	public $var3;
 	
 	function __construct($a, $b, $c = null) {
 		$this->var1 = $a;

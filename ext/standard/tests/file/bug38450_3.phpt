@@ -4,8 +4,8 @@ Bug #38450 (constructor is not called for classes used in userspace stream wrapp
 <?php
 
 class VariableStream {
-	var $position;
-	var $varname;
+	public $position;
+	public $varname;
 
 	function __construct(array $var) {
 		var_dump("constructor!");

@@ -148,7 +148,7 @@ check_printr($arrays);
 echo "\n*** Testing print_r() on object variables ***\n";
 class object_class
 {
-  var       $value;
+  public    $value;
   public    $public_var1 = 10;
   private   $private_var1 = 20;
   private   $private_var2;
@@ -180,12 +180,12 @@ class no_member_class {
 /* class with member as object of other class */
 class contains_object_class
 {
-   var       $p = 30;
-   var       $class_object1;
+   public    $p = 30;
+   public    $class_object1;
    public    $class_object2;
    private   $class_object3;
    protected $class_object4;
-   var       $no_member_class_object;
+   public    $no_member_class_object;
 
    public function func() {
      echo "func() is called \n";
@@ -627,13 +627,16 @@ abcd efgh ijkl mnop 0qrst uvwx 0yz
 -- Iteration 14 --
 1234	
 5678
-	9100abcda
+	9100
+abcda
 1234	
 5678
-	9100abcda
+	9100
+abcda
 1234	
 5678
-	9100abcda
+	9100
+abcda
 *** Testing print_r() on boolean variables ***
 
 -- Iteration 1 --

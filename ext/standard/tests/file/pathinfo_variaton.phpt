@@ -13,10 +13,10 @@ unset($fp);
 
 class object_temp {
   public $url_var = "www.foo.com";
-  var $html_var = "/var/html/testdir/example.html";
-  var $dir_var = "/testdir/foo/test/";
+  public $html_var = "/var/html/testdir/example.html";
+  public $dir_var = "/testdir/foo/test/";
   public $file_var = "/foo//symlink.link";
-  var $number = 12345;
+  public $number = 12345;
 }
 $obj = new object_temp();
 

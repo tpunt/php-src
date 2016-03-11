@@ -3,7 +3,7 @@ SPL: Bug #70365 use-after-free vulnerability in unserialize() with SplObjectStor
 --FILE--
 <?php
 class obj {
-	var $ryat;
+	public $ryat;
 	function __wakeup() {
 		$this->ryat = 1;
 	}

@@ -197,9 +197,9 @@ var_dump( empty($resources) );  // expected: bool(true)
 echo "\n*** Testing unset(), empty() & isset() with objects ***\n";
 class Point
 {
-  var $x;
-  var $y;
-  var $lable;
+  public $x;
+  public $y;
+  public $lable;
   
   function __construct($x, $y) {
     $this->x = $x;

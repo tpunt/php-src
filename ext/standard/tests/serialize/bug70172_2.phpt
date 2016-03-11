@@ -5,7 +5,7 @@ Unfinished merge, needs fix.
 --FILE--
 <?php
 class obj implements Serializable {
-	var $data;
+	public $data;
 	function serialize() {
 		return serialize($this->data);
 	}
@@ -15,7 +15,7 @@ class obj implements Serializable {
 }
 
 class obj2 {
-	var $ryat;
+	public $ryat;
 	function __wakeup() {
 		$this->ryat = 1;
 	}

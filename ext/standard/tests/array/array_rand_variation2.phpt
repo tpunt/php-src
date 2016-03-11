@@ -26,7 +26,7 @@ unset ($unset_var);
 //define a class
 class test
 {
-  var $t = 10;
+  public $t = 10;
   function __toString()
   {
     return "3object";

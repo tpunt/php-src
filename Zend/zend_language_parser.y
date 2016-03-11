@@ -768,7 +768,7 @@ method_body:
 
 variable_modifiers:
 		non_empty_member_modifiers		{ $$ = $1; }
-	|	T_VAR							{ $$ = ZEND_ACC_PUBLIC; }
+	|	T_VAR							{ $$ = zend_add_member_modifier_var(ZEND_ACC_PUBLIC); }
 ;
 
 method_modifiers:

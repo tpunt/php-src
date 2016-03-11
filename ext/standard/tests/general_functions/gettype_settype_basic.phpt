@@ -35,8 +35,8 @@ $var2 = array(2,3,4);
 
 class point
 {
-  var $x;
-  var $y;
+  public $x;
+  public $y;
 
   function __construct($x, $y) {
      $this->x = $x;

@@ -3,7 +3,7 @@ Bug #55305 (ref lost: 1st ref instantiated in class def, 2nd ref made w/o instan
 --FILE--
 <?php
 class Foo {
-  var $foo = "test";
+  public $foo = "test";
 }
 
 $f = new Foo();

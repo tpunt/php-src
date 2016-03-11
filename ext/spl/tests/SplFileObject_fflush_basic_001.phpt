@@ -13,8 +13,8 @@ var_dump($obj->fflush());
 */
 //create a basic stream class
 class VariableStream {
-    var $position;
-    var $varname;
+    public $position;
+    public $varname;
 
     function stream_open($path, $mode, $options, &$opened_path)
     {

@@ -3,7 +3,7 @@ Bug #47165 (Possible memory corruption when passing return value by reference)
 --FILE--
 <?php
 class Foo {
-	var $bar = array();
+	public $bar = array();
 
 	static function bar() {
 		static $instance = null;

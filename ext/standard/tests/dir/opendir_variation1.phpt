@@ -31,7 +31,7 @@ unset ($unset_var);
 // get a class
 class classA {
 
-	var $path;
+	public $path;
 	function __construct($path) {
 		$this->path = $path;
 	}

@@ -810,6 +810,13 @@ uint32_t zend_add_member_modifier(uint32_t flags, uint32_t new_flag) /* {{{ */
 }
 /* }}} */
 
+uint32_t zend_add_member_modifier_var(uint32_t flag) /* {{{ */
+{
+	zend_error(E_DEPRECATED, "The \"var\" member modifier has been deprecated in favour of \"public\"");
+	return flag;
+}
+/* }}} */
+
 zend_string *zend_concat3(char *str1, size_t str1_len, char *str2, size_t str2_len, char *str3, size_t str3_len) /* {{{ */
 {
 	size_t len = str1_len + str2_len + str3_len;

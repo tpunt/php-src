@@ -26,7 +26,7 @@ $fp = fopen(__FILE__, "r");
 // define a class
 class test
 {
-   var $t = 10;
+   public $t = 10;
    function __toString() {
      return  "testObject";
    }

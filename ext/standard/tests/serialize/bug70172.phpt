@@ -3,7 +3,7 @@ Bug #70172 - Use After Free Vulnerability in unserialize()
 --FILE--
 <?php
 class obj implements Serializable {
-	var $data;
+	public $data;
 	function serialize() {
 		return serialize($this->data);
 	}

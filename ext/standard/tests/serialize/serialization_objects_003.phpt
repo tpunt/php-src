@@ -32,7 +32,7 @@ abstract class Name
 // implement abstract class
 class extendName extends Name 
 {
-  var $a, $b, $c;
+  public $a, $b, $c;
 
   protected function getClassName() {
     return "extendName";

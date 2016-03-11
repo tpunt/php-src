@@ -20,7 +20,7 @@ unset ($unset_var);
 // get a class
 class classA
 {
-	var $var1;
+	public $var1;
   public function __toString() {
     return "Class A object";
   }

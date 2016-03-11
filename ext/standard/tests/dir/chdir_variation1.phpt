@@ -24,7 +24,7 @@ unset ($unset_var);
 
 // get a class
 class classA {
-	var $dir_path;
+	public $dir_path;
 	
 	function __construct($dir) {
 		$this->dir_path = $dir;

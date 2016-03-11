@@ -23,7 +23,7 @@ class test
 class test1
 {
   public $member1;
-  var $var1;
+  public $var1;
   private $member2;
   protected $member3;
 

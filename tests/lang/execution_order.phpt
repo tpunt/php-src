@@ -6,7 +6,7 @@ Execution order of variables
 /* strings and concat */
 
 class strclass {
-   var $str = "bad";
+   public $str = "bad";
    static $statstr = "bad";
 }
 

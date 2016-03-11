@@ -3,7 +3,7 @@ Bug #39775 ("Indirect modification ..." message is not shown)
 --FILE--
 <?php
 class test {
-	var $array = array();
+	public $array = array();
 	function __get($var) {
 		$v =& $this->array;
 		return $this->array;

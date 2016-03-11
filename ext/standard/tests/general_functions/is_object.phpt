@@ -55,7 +55,7 @@ class Value implements IValue
 // a gereral class 
 class myClass 
 {
-  var       $foo_object;
+  public       $foo_object;
   public    $public_var;
   public    $public_var1;
   private   $private_var;
