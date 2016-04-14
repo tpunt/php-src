@@ -2066,6 +2066,8 @@ PHP_FUNCTION(array_fill_keys)
 }
 /* }}} */
 
+#define DOUBLE_DRIFT_FIX 0.000000000000001
+
 #define RANGE_CHECK_DOUBLE_INIT_ARRAY(start, end) do { \
 		double __calc_size = ((start - end) / step) + 1; \
 		if (__calc_size >= (double)HT_MAX_SIZE) { \
@@ -2184,8 +2186,8 @@ PHP_FUNCTION(range)
 			zend_hash_next_index_insert_new(Z_ARRVAL_P(return_value), &tmp);
 		}
 	} else if (Z_TYPE_P(zlow) == IS_DOUBLE || Z_TYPE_P(zhigh) == IS_DOUBLE || is_step_double) {
-		double low, high;
-		uint32_t i, size;
+		double low, high, value;
+		uint32_t i = 0, size;
 double_str:
 		low = zval_get_double(zlow);
 		high = zval_get_double(zhigh);
@@ -2205,8 +2207,8 @@ double_str:
 			RANGE_CHECK_DOUBLE_INIT_ARRAY(low, high);
 
 			ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(return_value)) {
-				for (i = 0; i < size; ++i) {
-					Z_DVAL(tmp) = low - (i * step);
+				for (value = low; value >= (high - DOUBLE_DRIFT_FIX) && i <= size; value = low - (++i * step)) {
+					Z_DVAL(tmp) = value;
 					ZEND_HASH_FILL_ADD(&tmp);
 				}
 			} ZEND_HASH_FILL_END();
@@ -2219,8 +2221,8 @@ double_str:
 			RANGE_CHECK_DOUBLE_INIT_ARRAY(high, low);
 
 			ZEND_HASH_FILL_PACKED(Z_ARRVAL_P(return_value)) {
-				for (i = 0; i < size; ++i) {
-					Z_DVAL(tmp) = low + (i * step);
+				for (value = low; value <= (high + DOUBLE_DRIFT_FIX) && i <= size; value = low + (++i * step)) {
+					Z_DVAL(tmp) = value;
 					ZEND_HASH_FILL_ADD(&tmp);
 				}
 			} ZEND_HASH_FILL_END();
@@ -2290,6 +2292,7 @@ err:
 
 #undef RANGE_CHECK_DOUBLE_INIT_ARRAY
 #undef RANGE_CHECK_LONG_INIT_ARRAY
+#undef DOUBLE_DRIFT_FIX
 
 static void php_array_data_shuffle(zval *array) /* {{{ */
 {
