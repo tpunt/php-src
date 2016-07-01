@@ -26,6 +26,8 @@
 #include "php_ini.h"
 #include "ext/standard/info.h"
 #include "php_phactor.h"
+#include "ext/standard/php_rand.h"
+#include "ext/standard/php_var.h"
 #include <pthread.h>
 #include <semaphore.h>
 #include <unistd.h>
@@ -37,13 +39,35 @@ ZEND_DECLARE_MODULE_GLOBALS(phactor)
 
 struct ActorSystem {
     // char system_reference[10];
-    struct Actor *actor;
+    // HashTable         actors;
+    // zend_long         index;
+	// HashPosition      pos;
+	// zend_long         flags;
+	// zend_function    *fptr_get_hash;
+	// zval             *gcdata;
+	// size_t            gcdata_num;
+	// zend_object       std;
+    struct Actor *actors;
 };
 
+/*
+spl_SplObjectStorageElement *pelement, element;
+zend_hash_key key;
+if (spl_object_storage_get_hash(&key, intern, this, obj) == FAILURE) {
+    return NULL;
+}
+
+pelement = spl_object_storage_get(intern, &key);
+
+
+RETURN_NEW_STR(php_spl_object_hash(obj));
+*/
+
 struct Actor {
-    zend_object *actor;
+    zval actor;
     struct Mailbox *mailbox;
     struct Actor *next;
+    zend_string actor_ref;
 };
 
 struct Mailbox {
@@ -57,117 +81,169 @@ static pthread_t scheduler_thread;
 static zend_object_handlers php_actor_handlers;
 struct ActorSystem actor_system;
 
+void process_message(struct Actor *actor)
+{
+    struct Mailbox *mail = actor->mailbox;
+    printf("mp: %p", mail);
+    // actor->mailbox = actor->mailbox->next;
+    // printf("aaaaaaaaaaaa\n");
+    php_debug_zval_dump(mail->message, 1);
+}
+
 void *scheduler()
 {
-    struct Actor *start_actor = actor_system.actor;
-    struct Actor *current_actor = start_actor;
+    struct Actor *current_actor = actor_system.actors;
 
     while (1) {
-        // if (!actor_system_alive) {
-        //     break;
-        // }
-
-        if (php_shutdown && start_actor == NULL) {
+        // printf("current_actor: %p\n", current_actor);
+        if (php_shutdown && actor_system.actors == NULL) {
             break;
         }
 
         if (current_actor == NULL) {
-            current_actor = start_actor;
+            current_actor = actor_system.actors;
             continue;
         }
-
+        // printf("\n3");
         if (current_actor->mailbox == NULL) {
             continue;
         }
+        // printf("4");
+        process_message(current_actor);
 
-        printf("Performing some work...\n");
         // spl_observer.c:123
         // zend_call_method_with_1_params(this, intern->std.ce, &intern->fptr_get_hash, "getHash", &rv, obj);
 
         current_actor = current_actor->next;
     }
+
+    printf("\n");
+
+    return NULL;
 }
 
 void initialise_actor_system()
 {
-    int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable, and gives logical, not physical core count
+    // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable, and gives logical, not physical core count
 
     pthread_create(&scheduler_thread, NULL, scheduler, NULL);
 }
 
-struct Actor *get_actor_from_object(zend_object *actor_object)
-{
-    struct Actor *actor = actor_system.actor;
+zend_string *autoload_extensions;
+HashTable   *autoload_functions;
+intptr_t     hash_mask_handle;
+intptr_t     hash_mask_handlers;
+int          hash_mask_init;
+int          autoload_running;
 
-    while (actor->actor != actor_object) {
-        actor = actor->next;
+zend_string *spl_object_hash(zval *obj) /* {{{*/
+{
+	intptr_t hash_handle, hash_handlers;
+
+	if (!hash_mask_init) {
+		if (!BG(mt_rand_is_seeded)) {
+			php_mt_srand((uint32_t)GENERATE_SEED());
+		}
+
+		hash_mask_handle = (intptr_t)(php_mt_rand() >> 1);
+		hash_mask_handlers = (intptr_t)(php_mt_rand() >> 1);
+		hash_mask_init = 1;
+	}
+
+	hash_handle   = hash_mask_handle ^(intptr_t)Z_OBJ_HANDLE_P(obj);
+	hash_handlers = hash_mask_handlers;
+
+	return strpprintf(32, "%016lx%016lx", hash_handle, hash_handlers);
+}
+/* }}} */
+
+struct Actor *get_actor_from_zval(zval *actor_zval)
+{
+    struct Actor *current_actor = actor_system.actors;
+    zend_string *actor_object_ref = spl_object_hash(actor_zval);
+
+    // if (current_actor == NULL) {
+        // return NULL;
+    // }
+
+    printf("current_actor: %p\n", current_actor);
+    while (strcmp(current_actor->actor_ref.val, actor_object_ref->val) != 0) {
+        printf("current_actor ref: %s\nactor_object ref: %s\n", current_actor->actor_ref.val, actor_object_ref->val);
+        current_actor = current_actor->next;
+        printf("current_actor: %p\n", current_actor);
     }
 
-    // assert(actor != NULL);
-
-    return actor;
+    return current_actor;
 }
 
-void add_new_actor(zend_object *actor_object)
+void add_new_actor(zval *actor_zval)
 {
-    struct Actor *last_actor = actor_system.actor;
+    struct Actor **current_actor = &actor_system.actors;
+    zend_string *actor_ref = spl_object_hash(actor_zval);
 
-    if (last_actor == NULL) {
-        actor_system.actor = malloc(sizeof(struct Actor));
-        actor_system.actor->actor = actor_object;
-        printf("Added actor %p\n", actor_object);
+    while (*current_actor != NULL) {
+        *current_actor = (*current_actor)->next;
+    }
+
+    *current_actor = malloc(sizeof(struct Actor));
+    ZVAL_COPY(&(*current_actor)->actor, actor_zval);
+    (*current_actor)->actor_ref = *actor_ref;
+    (*current_actor)->next = NULL;
+    // printf("Added actor: %p\n", *current_actor);
+    // printf("actor_system.actors: %p\n", actor_system.actors);
+}
+
+void send_message(zval *actor_zval, zval *message)
+{
+    struct Actor *actor = get_actor_from_zval(actor_zval);
+    struct Mailbox *current_message = actor->mailbox;
+
+    if (current_message == NULL) {
+        actor->mailbox = malloc(sizeof(struct Mailbox));
+        ZVAL_COPY(actor->mailbox->message, message);
+        actor->mailbox->next = NULL;
+        // printf("sent 1 message\n");
         return;
     }
 
-    while (last_actor != NULL) {
-        if (last_actor->next == NULL) {
-            last_actor->next = malloc(sizeof(struct Actor));
-            last_actor->next->actor = actor_object;
-            printf("Added actor %p\n", actor_object);
+    while (current_message != NULL) {
+        // printf("current_message: %p\n", current_message);
+        // printf("current_message->next: %p\n", current_message->next);
+        if (current_message->next == NULL) {
+            // printf("sent more than 1 message\n");
+            current_message->next = malloc(sizeof(struct Mailbox));
+            ZVAL_COPY(current_message->next->message, message);
+            current_message->next->next = NULL;
             break;
         } else {
-            last_actor = last_actor->next;
+            current_message = current_message->next;
         }
     }
 }
 
-void send_message(zend_object *actor_object, zval *message)
-{
-    printf("Sending message to %p\n", actor_object);
-    struct Actor *actor = get_actor_from_object(actor_object);
-    struct Mailbox *last_message = actor->mailbox->next;
-
-    while (last_message != NULL) {
-        last_message = last_message->next;
-    }
-
-    last_message = malloc(sizeof(struct Mailbox));
-    last_message->message = message;
-}
-
 void initialise_actor_object(zval *actor)
 {
-    add_new_actor(Z_OBJ_P(actor));
+    add_new_actor(actor);
 }
 
 void remove_actor_object(zval *actor)
 {
-    struct Actor *target_actor = get_actor_from_object(Z_OBJ_P(actor));
-    struct Actor *last_actor = actor_system.actor;
+    struct Actor *target_actor = get_actor_from_zval(actor);
+    struct Actor *current_actor = actor_system.actors;
 
-    if (last_actor == target_actor) {
-        actor_system.actor = last_actor->next;
+    if (current_actor == target_actor) {
+        actor_system.actors = current_actor->next;
         free(target_actor);
         return;
     }
 
-    while (last_actor != target_actor) {
-        if (last_actor->next == target_actor) {
-            last_actor->next = last_actor->next->next;
+    while (current_actor != target_actor) {
+        if (current_actor->next == target_actor) {
+            current_actor->next = current_actor->next->next;
             free(target_actor);
             break;
         } else {
-            last_actor = last_actor->next;
+            current_actor = current_actor->next;
         }
     }
 }
@@ -241,10 +317,10 @@ PHP_METHOD(Actor, __construct)
 /* {{{ proto string Actor::send(Actor $actor, mixed $message) */
 PHP_METHOD(Actor, send)
 {
-    zend_object *actor;
+    zval *actor;
     zval *message;
 
-	if (zend_parse_parameters(ZEND_NUM_ARGS(), "Oz", &actor, Actor_ce, &message) != SUCCESS) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "oz", &actor, &message) != SUCCESS) {
 		return;
 	}
 
