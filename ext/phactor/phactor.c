@@ -67,7 +67,7 @@ struct Actor {
     zval actor;
     struct Mailbox *mailbox;
     struct Actor *next;
-    zend_string actor_ref;
+    char actor_ref[32];
 };
 
 struct Mailbox {
@@ -136,7 +136,7 @@ intptr_t     hash_mask_handlers;
 int          hash_mask_init;
 int          autoload_running;
 
-zend_string *spl_object_hash(zval *obj) /* {{{*/
+char *spl_object_hash(zval *obj) /* {{{*/
 {
 	intptr_t hash_handle, hash_handlers;
 
@@ -153,22 +153,23 @@ zend_string *spl_object_hash(zval *obj) /* {{{*/
 	hash_handle   = hash_mask_handle ^(intptr_t)Z_OBJ_HANDLE_P(obj);
 	hash_handlers = hash_mask_handlers;
 
-	return strpprintf(32, "%016lx%016lx", hash_handle, hash_handlers);
+	return strpprintf(32, "%016lx%016lx", hash_handle, hash_handlers)->val;
 }
 /* }}} */
 
 struct Actor *get_actor_from_zval(zval *actor_zval)
 {
     struct Actor *current_actor = actor_system.actors;
-    zend_string *actor_object_ref = spl_object_hash(actor_zval);
+    char actor_object_ref[32];// = spl_object_hash(actor_zval);
+    strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
 
     // if (current_actor == NULL) {
         // return NULL;
     // }
 
     printf("current_actor: %p\n", current_actor);
-    while (strcmp(current_actor->actor_ref.val, actor_object_ref->val) != 0) {
-        printf("current_actor ref: %s\nactor_object ref: %s\n", current_actor->actor_ref.val, actor_object_ref->val);
+    while (strcmp(current_actor->actor_ref, actor_object_ref) == 0) {
+        printf("current_actor ref: %.*s\nactor_object ref: %.*s\n", 32, current_actor->actor_ref, 32, actor_object_ref);
         current_actor = current_actor->next;
         printf("current_actor: %p\n", current_actor);
     }
@@ -179,18 +180,24 @@ struct Actor *get_actor_from_zval(zval *actor_zval)
 void add_new_actor(zval *actor_zval)
 {
     struct Actor **current_actor = &actor_system.actors;
-    zend_string *actor_ref = spl_object_hash(actor_zval);
+    char actor_object_ref[32];
+    strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
+    // ZVAL_NEW_STR(&actor_ref_zval, spl_object_hash(actor_zval));
 
     while (*current_actor != NULL) {
-        *current_actor = (*current_actor)->next;
+        current_actor = &(*current_actor)->next;
     }
 
     *current_actor = malloc(sizeof(struct Actor));
     ZVAL_COPY(&(*current_actor)->actor, actor_zval);
-    (*current_actor)->actor_ref = *actor_ref;
+    // ZVAL_NEW_STR(&(*current_actor)->actor_ref, actor_ref);
+    // (*current_actor)->actor_ref = *actor_ref;
+    // (*current_actor)->actor_ref = actor_object_ref;
+    strncpy((*current_actor)->actor_ref, actor_object_ref, 32 * sizeof(char));
     (*current_actor)->next = NULL;
     // printf("Added actor: %p\n", *current_actor);
-    // printf("actor_system.actors: %p\n", actor_system.actors);
+    // printf("actor_object_ref: %.*s\n", 32, actor_object_ref);
+    // printf("actor_system.actors->actor_ref: %.*s\n", 32, actor_system.actors->actor_ref);
 }
 
 void send_message(zval *actor_zval, zval *message)
