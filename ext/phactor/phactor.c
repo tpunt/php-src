@@ -71,7 +71,7 @@ struct Actor {
 };
 
 struct Mailbox {
-    zval *message;
+    zval message;
     struct Mailbox *next;
 };
 
@@ -84,10 +84,12 @@ struct ActorSystem actor_system;
 void process_message(struct Actor *actor)
 {
     struct Mailbox *mail = actor->mailbox;
-    printf("mp: %p", mail);
-    // actor->mailbox = actor->mailbox->next;
+    // printf("mp: %p\n", &mail->message);
+    actor->mailbox = actor->mailbox->next;
     // printf("aaaaaaaaaaaa\n");
-    php_debug_zval_dump(mail->message, 1);
+    php_debug_zval_dump(&mail->message, 3);
+
+    // free message
 }
 
 void *scheduler()
@@ -167,11 +169,11 @@ struct Actor *get_actor_from_zval(zval *actor_zval)
         // return NULL;
     // }
 
-    printf("current_actor: %p\n", current_actor);
+    // printf("current_actor: %p\n", current_actor);
     while (strcmp(current_actor->actor_ref, actor_object_ref) == 0) {
-        printf("current_actor ref: %.*s\nactor_object ref: %.*s\n", 32, current_actor->actor_ref, 32, actor_object_ref);
+        // printf("current_actor ref: %.*s\nactor_object ref: %.*s\n", 32, current_actor->actor_ref, 32, actor_object_ref);
         current_actor = current_actor->next;
-        printf("current_actor: %p\n", current_actor);
+        // printf("current_actor: %p\n", current_actor);
     }
 
     return current_actor;
@@ -194,6 +196,7 @@ void add_new_actor(zval *actor_zval)
     // (*current_actor)->actor_ref = *actor_ref;
     // (*current_actor)->actor_ref = actor_object_ref;
     strncpy((*current_actor)->actor_ref, actor_object_ref, 32 * sizeof(char));
+    // (*current_actor)->mailbox = NULL;
     (*current_actor)->next = NULL;
     // printf("Added actor: %p\n", *current_actor);
     // printf("actor_object_ref: %.*s\n", 32, actor_object_ref);
@@ -203,29 +206,17 @@ void add_new_actor(zval *actor_zval)
 void send_message(zval *actor_zval, zval *message)
 {
     struct Actor *actor = get_actor_from_zval(actor_zval);
-    struct Mailbox *current_message = actor->mailbox;
+    struct Mailbox **current_message = &actor->mailbox;
 
-    if (current_message == NULL) {
-        actor->mailbox = malloc(sizeof(struct Mailbox));
-        ZVAL_COPY(actor->mailbox->message, message);
-        actor->mailbox->next = NULL;
-        // printf("sent 1 message\n");
-        return;
+    while (*current_message != NULL) {
+        current_message = &(*current_message)->next;
     }
 
-    while (current_message != NULL) {
-        // printf("current_message: %p\n", current_message);
-        // printf("current_message->next: %p\n", current_message->next);
-        if (current_message->next == NULL) {
-            // printf("sent more than 1 message\n");
-            current_message->next = malloc(sizeof(struct Mailbox));
-            ZVAL_COPY(current_message->next->message, message);
-            current_message->next->next = NULL;
-            break;
-        } else {
-            current_message = current_message->next;
-        }
-    }
+    *current_message = malloc(sizeof(struct Mailbox));
+    ZVAL_COPY(&(*current_message)->message, message);
+    // printf("current_message: %p\n", &(*current_message)->message);
+    // (*current_message)->next = NULL;
+    // current_message->next->next = NULL;
 }
 
 void initialise_actor_object(zval *actor)
