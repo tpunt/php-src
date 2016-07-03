@@ -39,29 +39,8 @@ ZEND_DECLARE_MODULE_GLOBALS(phactor)
 
 struct ActorSystem {
     // char system_reference[10];
-    // HashTable         actors;
-    // zend_long         index;
-	// HashPosition      pos;
-	// zend_long         flags;
-	// zend_function    *fptr_get_hash;
-	// zval             *gcdata;
-	// size_t            gcdata_num;
-	// zend_object       std;
     struct Actor *actors;
 };
-
-/*
-spl_SplObjectStorageElement *pelement, element;
-zend_hash_key key;
-if (spl_object_storage_get_hash(&key, intern, this, obj) == FAILURE) {
-    return NULL;
-}
-
-pelement = spl_object_storage_get(intern, &key);
-
-
-RETURN_NEW_STR(php_spl_object_hash(obj));
-*/
 
 struct Actor {
     zval actor;
@@ -84,12 +63,10 @@ struct ActorSystem actor_system;
 void process_message(struct Actor *actor)
 {
     struct Mailbox *mail = actor->mailbox;
-    // printf("mp: %p\n", &mail->message);
     actor->mailbox = actor->mailbox->next;
-    // printf("aaaaaaaaaaaa\n");
-    php_debug_zval_dump(&mail->message, 3);
+    php_debug_zval_dump(&mail->message, 1);
 
-    // free message
+    free(&mail->message);
 }
 
 void *scheduler()
@@ -97,7 +74,6 @@ void *scheduler()
     struct Actor *current_actor = actor_system.actors;
 
     while (1) {
-        // printf("current_actor: %p\n", current_actor);
         if (php_shutdown && actor_system.actors == NULL) {
             break;
         }
@@ -106,11 +82,11 @@ void *scheduler()
             current_actor = actor_system.actors;
             continue;
         }
-        // printf("\n3");
+
         if (current_actor->mailbox == NULL) {
             continue;
         }
-        // printf("4");
+
         process_message(current_actor);
 
         // spl_observer.c:123
@@ -131,12 +107,9 @@ void initialise_actor_system()
     pthread_create(&scheduler_thread, NULL, scheduler, NULL);
 }
 
-zend_string *autoload_extensions;
-HashTable   *autoload_functions;
 intptr_t     hash_mask_handle;
 intptr_t     hash_mask_handlers;
 int          hash_mask_init;
-int          autoload_running;
 
 char *spl_object_hash(zval *obj) /* {{{*/
 {
@@ -162,18 +135,11 @@ char *spl_object_hash(zval *obj) /* {{{*/
 struct Actor *get_actor_from_zval(zval *actor_zval)
 {
     struct Actor *current_actor = actor_system.actors;
-    char actor_object_ref[32];// = spl_object_hash(actor_zval);
+    char actor_object_ref[32];
     strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
 
-    // if (current_actor == NULL) {
-        // return NULL;
-    // }
-
-    // printf("current_actor: %p\n", current_actor);
     while (strcmp(current_actor->actor_ref, actor_object_ref) == 0) {
-        // printf("current_actor ref: %.*s\nactor_object ref: %.*s\n", 32, current_actor->actor_ref, 32, actor_object_ref);
         current_actor = current_actor->next;
-        // printf("current_actor: %p\n", current_actor);
     }
 
     return current_actor;
@@ -184,7 +150,6 @@ void add_new_actor(zval *actor_zval)
     struct Actor **current_actor = &actor_system.actors;
     char actor_object_ref[32];
     strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
-    // ZVAL_NEW_STR(&actor_ref_zval, spl_object_hash(actor_zval));
 
     while (*current_actor != NULL) {
         current_actor = &(*current_actor)->next;
@@ -192,15 +157,8 @@ void add_new_actor(zval *actor_zval)
 
     *current_actor = malloc(sizeof(struct Actor));
     ZVAL_COPY(&(*current_actor)->actor, actor_zval);
-    // ZVAL_NEW_STR(&(*current_actor)->actor_ref, actor_ref);
-    // (*current_actor)->actor_ref = *actor_ref;
-    // (*current_actor)->actor_ref = actor_object_ref;
     strncpy((*current_actor)->actor_ref, actor_object_ref, 32 * sizeof(char));
-    // (*current_actor)->mailbox = NULL;
     (*current_actor)->next = NULL;
-    // printf("Added actor: %p\n", *current_actor);
-    // printf("actor_object_ref: %.*s\n", 32, actor_object_ref);
-    // printf("actor_system.actors->actor_ref: %.*s\n", 32, actor_system.actors->actor_ref);
 }
 
 void send_message(zval *actor_zval, zval *message)
@@ -214,9 +172,6 @@ void send_message(zval *actor_zval, zval *message)
 
     *current_message = malloc(sizeof(struct Mailbox));
     ZVAL_COPY(&(*current_message)->message, message);
-    // printf("current_message: %p\n", &(*current_message)->message);
-    // (*current_message)->next = NULL;
-    // current_message->next->next = NULL;
 }
 
 void initialise_actor_object(zval *actor)
