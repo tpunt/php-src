@@ -16,6 +16,10 @@
   +----------------------------------------------------------------------+
 */
 
+/*
+@NikiC Is there any way I can execute some code from an extension before ZE shuts down? In this case, I want to join a thread so that it blocks shutdown until the thread has finished executing. At the moment, I'm doing it in PHP_MSHUTDOWN_FUNCTION, which is obviously a bad idea...
+*/
+
 /* $Id$ */
 
 #ifdef HAVE_CONFIG_H
@@ -28,6 +32,7 @@
 #include "php_phactor.h"
 #include "ext/standard/php_rand.h"
 #include "ext/standard/php_var.h"
+#include "zend_interfaces.h"
 #include <pthread.h>
 #include <semaphore.h>
 #include <unistd.h>
@@ -54,48 +59,78 @@ struct Mailbox {
     struct Mailbox *next;
 };
 
+struct TaskQueue {
+    struct Task *task;
+};
+
+struct Task {
+    struct Actor *actor;
+    struct Task *next_task;
+};
+
 static int actor_system_alive = 1;
 static int php_shutdown = 0;
 static pthread_t scheduler_thread;
 static zend_object_handlers php_actor_handlers;
 struct ActorSystem actor_system;
+struct TaskQueue tasks;
+
+
+
+void remove_actor_from_task_queue(struct Actor *actor)
+{
+    struct Task *previous_task = tasks.task;
+    struct Task *current_task = tasks.task;
+
+    if (previous_task->actor == actor) {
+        tasks.task = tasks.task->next_task;
+        return;
+    }
+
+    while (current_task->actor != actor) {
+        previous_task = current_task;
+        current_task = current_task->next_task;
+    }
+
+    previous_task->next_task = current_task->next_task;
+
+    efree(current_task);
+}
 
 void process_message(struct Actor *actor)
 {
     struct Mailbox *mail = actor->mailbox;
-    actor->mailbox = actor->mailbox->next;
-    php_debug_zval_dump(&mail->message, 1);
+    zval *return_value = emalloc(sizeof(zval));
 
-    free(&mail->message);
+    actor->mailbox = actor->mailbox->next;
+    zend_call_method_with_1_params(&actor->actor, Z_OBJCE(actor->actor), NULL, "receive", return_value, &mail->message);
+
+    free(mail);
+    remove_actor_from_task_queue(actor);
 }
 
 void *scheduler()
 {
-    struct Actor *current_actor = actor_system.actors;
+    struct Task *current_task = tasks.task;
 
     while (1) {
         if (php_shutdown && actor_system.actors == NULL) {
             break;
         }
 
-        if (current_actor == NULL) {
-            current_actor = actor_system.actors;
+        if (current_task == NULL) {
+            current_task = tasks.task;
             continue;
         }
 
-        if (current_actor->mailbox == NULL) {
+        if (current_task->actor->mailbox == NULL) {
             continue;
         }
 
-        process_message(current_actor);
+        process_message(current_task->actor);
 
-        // spl_observer.c:123
-        // zend_call_method_with_1_params(this, intern->std.ce, &intern->fptr_get_hash, "getHash", &rv, obj);
-
-        current_actor = current_actor->next;
+        current_task = current_task->next_task;
     }
-
-    printf("\n");
 
     return NULL;
 }
@@ -103,6 +138,8 @@ void *scheduler()
 void initialise_actor_system()
 {
     // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable, and gives logical, not physical core count
+
+    tasks.task = NULL;
 
     pthread_create(&scheduler_thread, NULL, scheduler, NULL);
 }
@@ -136,42 +173,108 @@ struct Actor *get_actor_from_zval(zval *actor_zval)
 {
     struct Actor *current_actor = actor_system.actors;
     char actor_object_ref[32];
-    strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
+    strncpy(actor_object_ref, spl_object_hash(actor_zval), sizeof(actor_object_ref));
 
-    while (strcmp(current_actor->actor_ref, actor_object_ref) == 0) {
+    while (strncmp(current_actor->actor_ref, actor_object_ref, sizeof(actor_object_ref)) == 0) {
         current_actor = current_actor->next;
     }
 
     return current_actor;
 }
 
+struct Actor *create_new_actor(zval *actor_zval)
+{
+    struct Actor *new_actor = malloc(sizeof(struct Actor));
+
+    ZVAL_COPY(&new_actor->actor, actor_zval);
+    strncpy(new_actor->actor_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
+    new_actor->next = NULL;
+    new_actor->mailbox = NULL;
+
+    return new_actor;
+}
+
 void add_new_actor(zval *actor_zval)
 {
-    struct Actor **current_actor = &actor_system.actors;
-    char actor_object_ref[32];
-    strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
+    struct Actor *previous_actor = actor_system.actors;
+    struct Actor *current_actor = actor_system.actors;
+    struct Actor *new_actor = create_new_actor(actor_zval);
 
-    while (*current_actor != NULL) {
-        current_actor = &(*current_actor)->next;
+    if (previous_actor == NULL) {
+        actor_system.actors = new_actor;
+        return;
     }
 
-    *current_actor = malloc(sizeof(struct Actor));
-    ZVAL_COPY(&(*current_actor)->actor, actor_zval);
-    strncpy((*current_actor)->actor_ref, actor_object_ref, 32 * sizeof(char));
-    (*current_actor)->next = NULL;
+    while (current_actor != NULL) {
+        previous_actor = current_actor;
+        current_actor = current_actor->next;
+    }
+
+    previous_actor->next = new_actor;
+
+    // struct Actor **current_actor = &actor_system.actors;
+    // char actor_object_ref[32];
+    // strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
+    //
+    // while (*current_actor != NULL) {
+    //     current_actor = &(*current_actor)->next;
+    // }
+    //
+    // *current_actor = malloc(sizeof(struct Actor));
+    // ZVAL_COPY(&(*current_actor)->actor, actor_zval);
+    // strncpy((*current_actor)->actor_ref, actor_object_ref, 32 * sizeof(char));
+    // (*current_actor)->next = NULL;
+    // (*current_actor)->mailbox = NULL;
+}
+
+struct Mailbox *create_new_message(zval *message)
+{
+    struct Mailbox *new_message = malloc(sizeof(struct Mailbox));
+    ZVAL_COPY(&new_message->message, message);
+    new_message->next = NULL;
+    return new_message;
+}
+
+void add_actor_to_task_queue(struct Actor *actor)
+{
+    struct Task *previous_task = tasks.task;
+    struct Task *current_task = tasks.task;
+
+    if (previous_task == NULL) {
+        tasks.task = emalloc(sizeof(struct Task));
+        tasks.task->actor = actor;
+        tasks.task->next_task = NULL;
+        return;
+    }
+
+    while (current_task != NULL) {
+        previous_task = current_task;
+        current_task = current_task->next_task;
+    }
+
+    previous_task->actor = actor;
 }
 
 void send_message(zval *actor_zval, zval *message)
 {
     struct Actor *actor = get_actor_from_zval(actor_zval);
-    struct Mailbox **current_message = &actor->mailbox;
+    struct Mailbox *previous_message = actor->mailbox;
+    struct Mailbox *current_message = actor->mailbox;
+    struct Mailbox *new_message = create_new_message(message);
 
-    while (*current_message != NULL) {
-        current_message = &(*current_message)->next;
+    if (previous_message == NULL) {
+        actor->mailbox = new_message;
+        add_actor_to_task_queue(actor);
+        return;
     }
 
-    *current_message = malloc(sizeof(struct Mailbox));
-    ZVAL_COPY(&(*current_message)->message, message);
+    while (current_message != NULL) {
+        previous_message = current_message;
+        current_message = current_message->next;
+    }
+
+    previous_message->next = new_message;
+    add_actor_to_task_queue(actor);
 }
 
 void initialise_actor_object(zval *actor)
@@ -199,6 +302,12 @@ void remove_actor_object(zval *actor)
             current_actor = current_actor->next;
         }
     }
+}
+
+zval *receive_block(zval *actor)
+{
+    // ...
+    return actor; // shutup
 }
 
 void shutdown_actor_system()
@@ -229,6 +338,9 @@ ZEND_BEGIN_ARG_INFO(Actor_abstract_receive_arginfo, 0)
 	ZEND_ARG_INFO(0, message)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_INFO(Actor_abstract_receiveblock_arginfo, 0)
+ZEND_END_ARG_INFO()
+
 
 
 /* {{{ proto string Actor::__construct() */
@@ -255,7 +367,6 @@ PHP_METHOD(ActorSystem, shutdown)
 }
 /* }}} */
 
-
 /* {{{ proto string Actor::__construct() */
 PHP_METHOD(Actor, __construct)
 {
@@ -277,7 +388,7 @@ PHP_METHOD(Actor, send)
 		return;
 	}
 
-    send_message(actor, message); // do asynchronously
+    send_message(actor, message);
 }
 /* }}} */
 
@@ -289,6 +400,17 @@ PHP_METHOD(Actor, remove)
 	}
 
     remove_actor_object(getThis());
+}
+/* }}} */
+
+/* {{{ proto string Actor::receiveBlock() */
+PHP_METHOD(Actor, receiveBlock)
+{
+	if (zend_parse_parameters_none() != SUCCESS) {
+		return;
+	}
+
+    return_value = receive_block(getThis());
 }
 /* }}} */
 
@@ -307,11 +429,13 @@ zend_function_entry Actor_methods[] = {
 	PHP_ME(Actor, send, Actor_send_arginfo, ZEND_ACC_PUBLIC)
     PHP_ME(Actor, remove, Actor_remove_arginfo, ZEND_ACC_PUBLIC)
     ZEND_FENTRY(receive, NULL, Actor_abstract_receive_arginfo, ZEND_ACC_PUBLIC|ZEND_ACC_ABSTRACT)
+    PHP_ME(Actor, receiveBlock, Actor_abstract_receiveblock_arginfo, ZEND_ACC_PUBLIC)
 	PHP_FE_END
 }; /* }}} */
 
 
 
+/* {{{ */
 void initialise_actor_system_class(void)
 {
     zend_class_entry ce;
@@ -328,6 +452,7 @@ void initialise_actor_system_class(void)
 	php_actor_handlers.get_properties = NULL;
 }
 
+/* {{{ */
 void initialise_actor_class(void)
 {
     zend_class_entry ce;
@@ -344,11 +469,11 @@ void initialise_actor_class(void)
 	php_actor_handlers.get_properties = NULL;
 }
 
+/* {{{ */
 void php_phactor_init(void)
 {
     initialise_actor_system_class();
     initialise_actor_class();
-    // initialise_actor_system();
 } /* }}} */
 
 /* {{{ php_phactor_init_globals
