@@ -51,7 +51,7 @@ struct Actor {
     zval actor;
     struct Mailbox *mailbox;
     struct Actor *next;
-    char actor_ref[32];
+    zend_string *actor_ref;
 };
 
 struct Mailbox {
@@ -71,7 +71,8 @@ struct Task {
 static int actor_system_alive = 1;
 static int php_shutdown = 0;
 static pthread_t scheduler_thread;
-static zend_object_handlers php_actor_handlers;
+static zend_object_handlers php_actor_handler;
+static zend_object_handlers php_actor_system_handler;
 struct ActorSystem actor_system;
 struct TaskQueue tasks;
 
@@ -105,7 +106,7 @@ void process_message(struct Actor *actor)
     actor->mailbox = actor->mailbox->next;
     zend_call_method_with_1_params(&actor->actor, Z_OBJCE(actor->actor), NULL, "receive", return_value, &mail->message);
 
-    free(mail);
+    efree(mail);
     remove_actor_from_task_queue(actor);
 }
 
@@ -148,9 +149,9 @@ intptr_t     hash_mask_handle;
 intptr_t     hash_mask_handlers;
 int          hash_mask_init;
 
-char *spl_object_hash(zval *obj) /* {{{*/
+zend_string *spl_object_hash(zend_object *obj)
 {
-	intptr_t hash_handle, hash_handlers;
+    intptr_t hash_handle, hash_handlers;
 
 	if (!hash_mask_init) {
 		if (!BG(mt_rand_is_seeded)) {
@@ -162,32 +163,47 @@ char *spl_object_hash(zval *obj) /* {{{*/
 		hash_mask_init = 1;
 	}
 
-	hash_handle   = hash_mask_handle ^(intptr_t)Z_OBJ_HANDLE_P(obj);
+	hash_handle   = hash_mask_handle ^(intptr_t)obj->handle;
 	hash_handlers = hash_mask_handlers;
 
-	return strpprintf(32, "%016lx%016lx", hash_handle, hash_handlers)->val;
+	return strpprintf(32, "%016lx%016lx", hash_handle, hash_handlers);
+}
+
+zend_string *spl_zval_object_hash(zval *zval_obj) /* {{{*/
+{
+    return spl_object_hash(Z_OBJ_P(zval_obj));
 }
 /* }}} */
 
-struct Actor *get_actor_from_zval(zval *actor_zval)
+struct Actor *get_actor_from_hash(zend_string *actor_object_ref)
 {
     struct Actor *current_actor = actor_system.actors;
-    char actor_object_ref[32];
-    strncpy(actor_object_ref, spl_object_hash(actor_zval), sizeof(actor_object_ref));
 
-    while (strncmp(current_actor->actor_ref, actor_object_ref, sizeof(actor_object_ref)) == 0) {
+    while (strncmp(current_actor->actor_ref->val, actor_object_ref->val, sizeof(char) * 32) != 0) {
         current_actor = current_actor->next;
     }
+
+    zend_string_free(actor_object_ref);
 
     return current_actor;
 }
 
+struct Actor *get_actor_from_object(zend_object *actor_obj)
+{
+    return get_actor_from_hash(spl_object_hash(actor_obj));
+}
+
+struct Actor *get_actor_from_zval(zval *actor_zval_obj)
+{
+    return get_actor_from_hash(spl_zval_object_hash(actor_zval_obj));
+}
+
 struct Actor *create_new_actor(zval *actor_zval)
 {
-    struct Actor *new_actor = malloc(sizeof(struct Actor));
+    struct Actor *new_actor = emalloc(sizeof(struct Actor));
 
     ZVAL_COPY(&new_actor->actor, actor_zval);
-    strncpy(new_actor->actor_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
+    new_actor->actor_ref = spl_zval_object_hash(actor_zval);
     new_actor->next = NULL;
     new_actor->mailbox = NULL;
 
@@ -214,7 +230,7 @@ void add_new_actor(zval *actor_zval)
 
     // struct Actor **current_actor = &actor_system.actors;
     // char actor_object_ref[32];
-    // strncpy(actor_object_ref, spl_object_hash(actor_zval), 32 * sizeof(char));
+    // strncpy(actor_object_ref, spl_zval_object_hash(actor_zval), 32 * sizeof(char));
     //
     // while (*current_actor != NULL) {
     //     current_actor = &(*current_actor)->next;
@@ -229,7 +245,7 @@ void add_new_actor(zval *actor_zval)
 
 struct Mailbox *create_new_message(zval *message)
 {
-    struct Mailbox *new_message = malloc(sizeof(struct Mailbox));
+    struct Mailbox *new_message = emalloc(sizeof(struct Mailbox));
     ZVAL_COPY(&new_message->message, message);
     new_message->next = NULL;
     return new_message;
@@ -252,7 +268,9 @@ void add_actor_to_task_queue(struct Actor *actor)
         current_task = current_task->next_task;
     }
 
-    previous_task->actor = actor;
+    current_task = emalloc(sizeof(struct Task));
+    current_task->actor = actor;
+    current_task->next_task = NULL;
 }
 
 void send_message(zval *actor_zval, zval *message)
@@ -289,19 +307,30 @@ void remove_actor_object(zval *actor)
 
     if (current_actor == target_actor) {
         actor_system.actors = current_actor->next;
-        free(target_actor);
+        zend_string_free(target_actor->actor_ref);
+        efree(target_actor);
         return;
     }
 
     while (current_actor != target_actor) {
         if (current_actor->next == target_actor) {
             current_actor->next = current_actor->next->next;
-            free(target_actor);
+            zend_string_free(target_actor->actor_ref);
+            efree(target_actor);
             break;
-        } else {
-            current_actor = current_actor->next;
         }
+
+        current_actor = current_actor->next;
     }
+}
+
+void php_actor_free_object(zend_object *obj)
+{
+    printf("\nFreeing actor!\n");
+    struct Actor *target_actor = get_actor_from_object(obj);
+    zend_string_free(target_actor->actor_ref);
+    efree(target_actor);
+    zend_object_std_dtor(obj);
 }
 
 zval *receive_block(zval *actor)
@@ -324,6 +353,9 @@ ZEND_END_ARG_INFO()
 
 
 ZEND_BEGIN_ARG_INFO(Actor_construct_arginfo, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(Actor_destruct_arginfo, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(Actor_send_arginfo, 0, 0, 1)
@@ -351,8 +383,6 @@ PHP_METHOD(ActorSystem, __construct)
 	}
 
     initialise_actor_system();
-
-    // initialise_actor_object(getThis());
 }
 /* }}} */
 
@@ -375,6 +405,17 @@ PHP_METHOD(Actor, __construct)
 	}
 
     initialise_actor_object(getThis());
+}
+/* }}} */
+
+/* {{{ proto string Actor::__destruct() */
+PHP_METHOD(Actor, __destruct)
+{
+	if (zend_parse_parameters_none() != SUCCESS) {
+		return;
+	}
+
+    php_actor_free_object(Z_OBJ_P(getThis()));
 }
 /* }}} */
 
@@ -426,6 +467,7 @@ zend_function_entry ActorSystem_methods[] = {
 /* {{{ */
 zend_function_entry Actor_methods[] = {
     PHP_ME(Actor, __construct, Actor_construct_arginfo, ZEND_ACC_PUBLIC)
+    PHP_ME(Actor, __destruct, Actor_destruct_arginfo, ZEND_ACC_PUBLIC)
 	PHP_ME(Actor, send, Actor_send_arginfo, ZEND_ACC_PUBLIC)
     PHP_ME(Actor, remove, Actor_remove_arginfo, ZEND_ACC_PUBLIC)
     ZEND_FENTRY(receive, NULL, Actor_abstract_receive_arginfo, ZEND_ACC_PUBLIC|ZEND_ACC_ABSTRACT)
@@ -447,9 +489,9 @@ void initialise_actor_system_class(void)
 
 	zh = zend_get_std_object_handlers();
 
-	memcpy(&php_actor_handlers, zh, sizeof(zend_object_handlers));
+	memcpy(&php_actor_system_handler, zh, sizeof(zend_object_handlers));
 
-	php_actor_handlers.get_properties = NULL;
+	php_actor_system_handler.get_properties = NULL;
 }
 
 /* {{{ */
@@ -464,9 +506,10 @@ void initialise_actor_class(void)
 
 	zh = zend_get_std_object_handlers();
 
-	memcpy(&php_actor_handlers, zh, sizeof(zend_object_handlers));
+	memcpy(&php_actor_handler, zh, sizeof(zend_object_handlers));
 
-	php_actor_handlers.get_properties = NULL;
+	php_actor_handler.get_properties = NULL;
+    php_actor_handler.dtor_obj = php_actor_free_object;
 }
 
 /* {{{ */
