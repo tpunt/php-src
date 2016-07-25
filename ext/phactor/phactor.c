@@ -216,6 +216,8 @@ void add_new_actor(zval *actor_zval)
     struct Actor *current_actor = actor_system.actors;
     struct Actor *new_actor = create_new_actor(actor_zval);
 
+    printf("Adding new actor (%d): %p\n", Z_COUNTED_P(actor_zval)->gc.u.v.type, actor_zval);
+
     if (previous_actor == NULL) {
         actor_system.actors = new_actor;
         return;
@@ -326,9 +328,13 @@ void remove_actor_object(zval *actor)
 
 void php_actor_free_object(zend_object *obj)
 {
-    printf("\nFreeing actor!\n");
     struct Actor *target_actor = get_actor_from_object(obj);
-    zend_string_free(target_actor->actor_ref);
+    printf("\nFreeing actor (%d): %p\n", Z_COUNTED(target_actor->actor)->gc.u.v.type, &target_actor->actor);
+    zend_string_release(target_actor->actor_ref);
+    // printf("Type: %d\n", Z_COUNTED_P(target_actor->actor));
+    if (Z_COUNTED(target_actor->actor)->gc.u.v.type == 8) {
+        zval_ptr_dtor(&target_actor->actor);
+    }
     efree(target_actor);
     zend_object_std_dtor(obj);
 }
@@ -382,6 +388,8 @@ PHP_METHOD(ActorSystem, __construct)
 		return;
 	}
 
+    printf("Actor System: %p\n", getThis());
+
     initialise_actor_system();
 }
 /* }}} */
@@ -400,11 +408,14 @@ PHP_METHOD(ActorSystem, shutdown)
 /* {{{ proto string Actor::__construct() */
 PHP_METHOD(Actor, __construct)
 {
-	if (zend_parse_parameters_none() != SUCCESS) {
+    zval *obj = NULL;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z", &obj) != SUCCESS) {
 		return;
 	}
 
-    initialise_actor_object(getThis());
+    printf("Actor object: %p\n", getThis());
+    initialise_actor_object(obj);
 }
 /* }}} */
 
