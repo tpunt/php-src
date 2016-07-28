@@ -48,7 +48,7 @@ struct ActorSystem {
 };
 
 struct Actor {
-    zval actor;
+    zval *actor;
     struct Mailbox *mailbox;
     struct Actor *next;
     zend_string *actor_ref;
@@ -104,7 +104,7 @@ void process_message(struct Actor *actor)
     zval *return_value = emalloc(sizeof(zval));
 
     actor->mailbox = actor->mailbox->next;
-    zend_call_method_with_1_params(&actor->actor, Z_OBJCE(actor->actor), NULL, "receive", return_value, &mail->message);
+    zend_call_method_with_1_params(actor->actor, Z_OBJCE_P(actor->actor), NULL, "receive", return_value, &mail->message);
 
     efree(mail);
     remove_actor_from_task_queue(actor);
@@ -175,14 +175,42 @@ zend_string *spl_zval_object_hash(zval *zval_obj) /* {{{*/
 }
 /* }}} */
 
+void debug_actor_system()
+{
+    struct Actor *current_actor = actor_system.actors;
+    int actor_count = 0;
+
+    printf("Debugging actors:\n");
+
+    while (current_actor != NULL) {
+        printf("%d) ref: %32s, actor: %p, actor_obj: %p\n", ++actor_count, current_actor->actor_ref->val, current_actor, current_actor->actor);
+        current_actor = current_actor->next;
+    }
+
+    printf("\n");
+}
+
 struct Actor *get_actor_from_hash(zend_string *actor_object_ref)
 {
     struct Actor *current_actor = actor_system.actors;
 
+    if (current_actor == NULL) {
+        printf("Trying to get actor hash from no actors\n");
+        return NULL;
+    }
+// debug_actor_system();
+// printf("Searching for: %32s\n", actor_object_ref->val);
+// printf("Actor ref 1:   %32s\n", current_actor->actor_ref->val);
     while (strncmp(current_actor->actor_ref->val, actor_object_ref->val, sizeof(char) * 32) != 0) {
         current_actor = current_actor->next;
-    }
+// printf("Actor ref 2: %32s\n", current_actor->actor_ref->val);
 
+        if (current_actor == NULL) {
+            return NULL;
+        }
+    }
+// printf("Found actor: %p\n", current_actor);
+// debug_actor_system();
     zend_string_free(actor_object_ref);
 
     return current_actor;
@@ -201,9 +229,11 @@ struct Actor *get_actor_from_zval(zval *actor_zval_obj)
 struct Actor *create_new_actor(zval *actor_zval)
 {
     struct Actor *new_actor = emalloc(sizeof(struct Actor));
+    new_actor->actor = emalloc(sizeof(zval));
 
-    ZVAL_COPY(&new_actor->actor, actor_zval);
+    ZVAL_COPY(new_actor->actor, actor_zval);
     new_actor->actor_ref = spl_zval_object_hash(actor_zval);
+    // printf("Actor ptr: %p\n", new_actor);
     new_actor->next = NULL;
     new_actor->mailbox = NULL;
 
@@ -216,7 +246,9 @@ void add_new_actor(zval *actor_zval)
     struct Actor *current_actor = actor_system.actors;
     struct Actor *new_actor = create_new_actor(actor_zval);
 
-    printf("Adding new actor (%d): %p\n", Z_COUNTED_P(actor_zval)->gc.u.v.type, actor_zval);
+// printf("Adding actor ref: %32s\n", new_actor->actor_ref->val);
+
+    // printf("Adding new actor (%d): %p\n", Z_COUNTED_P(actor_zval)->gc.u.v.type, actor_zval);
 
     if (previous_actor == NULL) {
         actor_system.actors = new_actor;
@@ -278,6 +310,12 @@ void add_actor_to_task_queue(struct Actor *actor)
 void send_message(zval *actor_zval, zval *message)
 {
     struct Actor *actor = get_actor_from_zval(actor_zval);
+
+    if (actor == NULL) {
+        printf("Tried to send a message to a non-existent actor\n");
+        return;
+    }
+
     struct Mailbox *previous_message = actor->mailbox;
     struct Mailbox *current_message = actor->mailbox;
     struct Mailbox *new_message = create_new_message(message);
@@ -302,40 +340,55 @@ void initialise_actor_object(zval *actor)
     add_new_actor(actor);
 }
 
-void remove_actor_object(zval *actor)
+void remove_actor(struct Actor *target_actor)
 {
-    struct Actor *target_actor = get_actor_from_zval(actor);
-    struct Actor *current_actor = actor_system.actors;
-
-    if (current_actor == target_actor) {
-        actor_system.actors = current_actor->next;
-        zend_string_free(target_actor->actor_ref);
-        efree(target_actor);
-        return;
-    }
-
-    while (current_actor != target_actor) {
-        if (current_actor->next == target_actor) {
-            current_actor->next = current_actor->next->next;
-            zend_string_free(target_actor->actor_ref);
-            efree(target_actor);
-            break;
+        if (target_actor == NULL) {
+            printf("Tried to remove to a non-existent actor object\n");
+            return;
         }
 
-        current_actor = current_actor->next;
-    }
+        struct Actor *current_actor = actor_system.actors;
+
+        if (current_actor == target_actor) {
+            actor_system.actors = current_actor->next;
+            zval_ptr_dtor(target_actor->actor);
+            efree(target_actor->actor);
+            zend_string_free(target_actor->actor_ref);
+            efree(target_actor);
+            return;
+        }
+
+        while (current_actor != target_actor) {
+            if (current_actor->next == target_actor) {
+                current_actor->next = current_actor->next->next;
+                zval_ptr_dtor(target_actor->actor);
+                efree(target_actor->actor);
+                zend_string_free(target_actor->actor_ref);
+                efree(target_actor);
+                break;
+            }
+
+            current_actor = current_actor->next;
+        }
+}
+
+void remove_actor_object(zval *actor)
+{
+    remove_actor(get_actor_from_zval(actor));
 }
 
 void php_actor_free_object(zend_object *obj)
 {
     struct Actor *target_actor = get_actor_from_object(obj);
-    printf("\nFreeing actor (%d): %p\n", Z_COUNTED(target_actor->actor)->gc.u.v.type, &target_actor->actor);
-    zend_string_release(target_actor->actor_ref);
-    // printf("Type: %d\n", Z_COUNTED_P(target_actor->actor));
-    if (Z_COUNTED(target_actor->actor)->gc.u.v.type == 8) {
-        zval_ptr_dtor(&target_actor->actor);
+// printf("Actor ref: %32s\n", target_actor->actor_ref->val);
+    if (target_actor == NULL) {
+        printf("Tried to free a non-existent object\n");
+        return;
     }
-    efree(target_actor);
+
+// printf("Freeing actor (%d): %p\n", Z_COUNTED_P(target_actor->actor)->gc.u.v.type, target_actor);
+
+    remove_actor(target_actor);
     zend_object_std_dtor(obj);
 }
 
@@ -388,8 +441,6 @@ PHP_METHOD(ActorSystem, __construct)
 		return;
 	}
 
-    printf("Actor System: %p\n", getThis());
-
     initialise_actor_system();
 }
 /* }}} */
@@ -408,14 +459,11 @@ PHP_METHOD(ActorSystem, shutdown)
 /* {{{ proto string Actor::__construct() */
 PHP_METHOD(Actor, __construct)
 {
-    zval *obj = NULL;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS(), "z", &obj) != SUCCESS) {
+	if (zend_parse_parameters_none() != SUCCESS) {
 		return;
 	}
-
-    printf("Actor object: %p\n", getThis());
-    initialise_actor_object(obj);
+    // ((php_indexed_t*) (((char*)Z_OBJ_P(getThis())) - XtOffsetOf(php_indexed_t, std)))
+    initialise_actor_object(getThis());
 }
 /* }}} */
 
