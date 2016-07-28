@@ -85,6 +85,7 @@ void remove_actor_from_task_queue(struct Actor *actor)
 
     if (previous_task->actor == actor) {
         tasks.task = tasks.task->next_task;
+        efree(current_task);
         return;
     }
 
@@ -106,7 +107,9 @@ void process_message(struct Actor *actor)
     actor->mailbox = actor->mailbox->next;
     zend_call_method_with_1_params(actor->actor, Z_OBJCE_P(actor->actor), NULL, "receive", return_value, &mail->message);
 
+    zval_ptr_dtor(&mail->message);
     efree(mail);
+    efree(return_value); // remove this (and return it instead?)
     remove_actor_from_task_queue(actor);
 }
 
@@ -174,6 +177,21 @@ zend_string *spl_zval_object_hash(zval *zval_obj) /* {{{*/
     return spl_object_hash(Z_OBJ_P(zval_obj));
 }
 /* }}} */
+
+void debug_tasks()
+{
+    struct Task *current_task = tasks.task;
+    int task_count = 0;
+
+    printf("Debugging tasks:\n");
+
+    while (current_task != NULL) {
+        printf("%d) actor: %p\n", ++task_count, current_task->actor);
+        current_task = current_task->next_task;
+    }
+
+    printf("\n");
+}
 
 void debug_actor_system()
 {
@@ -289,11 +307,12 @@ void add_actor_to_task_queue(struct Actor *actor)
 {
     struct Task *previous_task = tasks.task;
     struct Task *current_task = tasks.task;
+    struct Task *new_task = emalloc(sizeof(struct Task));
+    new_task->actor = actor;
+    new_task->next_task = NULL;
 
     if (previous_task == NULL) {
-        tasks.task = emalloc(sizeof(struct Task));
-        tasks.task->actor = actor;
-        tasks.task->next_task = NULL;
+        tasks.task = new_task;
         return;
     }
 
@@ -302,9 +321,9 @@ void add_actor_to_task_queue(struct Actor *actor)
         current_task = current_task->next_task;
     }
 
-    current_task = emalloc(sizeof(struct Task));
-    current_task->actor = actor;
-    current_task->next_task = NULL;
+    previous_task->next_task = new_task;
+
+    // debug_tasks();
 }
 
 void send_message(zval *actor_zval, zval *message)
