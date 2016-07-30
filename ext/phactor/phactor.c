@@ -17,7 +17,7 @@
 */
 
 /*
-@NikiC Is there any way I can execute some code from an extension before ZE shuts down? In this case, I want to join a thread so that it blocks shutdown until the thread has finished executing. At the moment, I'm doing it in PHP_MSHUTDOWN_FUNCTION, which is obviously a bad idea...
+
 */
 
 /* $Id$ */
@@ -43,7 +43,7 @@ ZEND_DECLARE_MODULE_GLOBALS(phactor)
 */
 
 struct ActorSystem {
-    // char system_reference[10];
+    // char system_reference[10]; // not needed until remote actors are introduced
     struct Actor *actors;
 };
 
@@ -68,8 +68,8 @@ struct Task {
     struct Task *next_task;
 };
 
-static int actor_system_alive = 1;
 static int php_shutdown = 0;
+static zend_bool daemonise_actor_system = 0;
 static pthread_t scheduler_thread;
 static zend_object_handlers php_actor_handler;
 static zend_object_handlers php_actor_system_handler;
@@ -109,7 +109,7 @@ void process_message(struct Actor *actor)
 
     zval_ptr_dtor(&mail->message);
     efree(mail);
-    efree(return_value); // remove this (and return it instead?)
+    efree(return_value); // remove this line (return the value instead? Or store it elsewhere?)
     remove_actor_from_task_queue(actor);
 }
 
@@ -118,7 +118,7 @@ void *scheduler()
     struct Task *current_task = tasks.task;
 
     while (1) {
-        if (php_shutdown && actor_system.actors == NULL) {
+        if (php_shutdown && tasks.task == NULL) {
             break;
         }
 
@@ -141,7 +141,7 @@ void *scheduler()
 
 void initialise_actor_system()
 {
-    // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable, and gives logical, not physical core count
+    // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable (also gives logical, not physical core count)
 
     tasks.task = NULL;
 
@@ -216,19 +216,15 @@ struct Actor *get_actor_from_hash(zend_string *actor_object_ref)
         printf("Trying to get actor hash from no actors\n");
         return NULL;
     }
-// debug_actor_system();
-// printf("Searching for: %32s\n", actor_object_ref->val);
-// printf("Actor ref 1:   %32s\n", current_actor->actor_ref->val);
+
     while (strncmp(current_actor->actor_ref->val, actor_object_ref->val, sizeof(char) * 32) != 0) {
         current_actor = current_actor->next;
-// printf("Actor ref 2: %32s\n", current_actor->actor_ref->val);
 
         if (current_actor == NULL) {
             return NULL;
         }
     }
-// printf("Found actor: %p\n", current_actor);
-// debug_actor_system();
+
     zend_string_free(actor_object_ref);
 
     return current_actor;
@@ -251,7 +247,6 @@ struct Actor *create_new_actor(zval *actor_zval)
 
     ZVAL_COPY(new_actor->actor, actor_zval);
     new_actor->actor_ref = spl_zval_object_hash(actor_zval);
-    // printf("Actor ptr: %p\n", new_actor);
     new_actor->next = NULL;
     new_actor->mailbox = NULL;
 
@@ -264,10 +259,6 @@ void add_new_actor(zval *actor_zval)
     struct Actor *current_actor = actor_system.actors;
     struct Actor *new_actor = create_new_actor(actor_zval);
 
-// printf("Adding actor ref: %32s\n", new_actor->actor_ref->val);
-
-    // printf("Adding new actor (%d): %p\n", Z_COUNTED_P(actor_zval)->gc.u.v.type, actor_zval);
-
     if (previous_actor == NULL) {
         actor_system.actors = new_actor;
         return;
@@ -279,20 +270,6 @@ void add_new_actor(zval *actor_zval)
     }
 
     previous_actor->next = new_actor;
-
-    // struct Actor **current_actor = &actor_system.actors;
-    // char actor_object_ref[32];
-    // strncpy(actor_object_ref, spl_zval_object_hash(actor_zval), 32 * sizeof(char));
-    //
-    // while (*current_actor != NULL) {
-    //     current_actor = &(*current_actor)->next;
-    // }
-    //
-    // *current_actor = malloc(sizeof(struct Actor));
-    // ZVAL_COPY(&(*current_actor)->actor, actor_zval);
-    // strncpy((*current_actor)->actor_ref, actor_object_ref, 32 * sizeof(char));
-    // (*current_actor)->next = NULL;
-    // (*current_actor)->mailbox = NULL;
 }
 
 struct Mailbox *create_new_message(zval *message)
@@ -300,6 +277,7 @@ struct Mailbox *create_new_message(zval *message)
     struct Mailbox *new_message = emalloc(sizeof(struct Mailbox));
     ZVAL_COPY(&new_message->message, message);
     new_message->next = NULL;
+
     return new_message;
 }
 
@@ -308,6 +286,7 @@ void add_actor_to_task_queue(struct Actor *actor)
     struct Task *previous_task = tasks.task;
     struct Task *current_task = tasks.task;
     struct Task *new_task = emalloc(sizeof(struct Task));
+
     new_task->actor = actor;
     new_task->next_task = NULL;
 
@@ -322,8 +301,6 @@ void add_actor_to_task_queue(struct Actor *actor)
     }
 
     previous_task->next_task = new_task;
-
-    // debug_tasks();
 }
 
 void send_message(zval *actor_zval, zval *message)
@@ -331,6 +308,7 @@ void send_message(zval *actor_zval, zval *message)
     struct Actor *actor = get_actor_from_zval(actor_zval);
 
     if (actor == NULL) {
+        // debugging purposes only
         printf("Tried to send a message to a non-existent actor\n");
         return;
     }
@@ -362,6 +340,7 @@ void initialise_actor_object(zval *actor)
 void remove_actor(struct Actor *target_actor)
 {
         if (target_actor == NULL) {
+            // debugging purposes only
             printf("Tried to remove to a non-existent actor object\n");
             return;
         }
@@ -399,13 +378,12 @@ void remove_actor_object(zval *actor)
 void php_actor_free_object(zend_object *obj)
 {
     struct Actor *target_actor = get_actor_from_object(obj);
-// printf("Actor ref: %32s\n", target_actor->actor_ref->val);
+
     if (target_actor == NULL) {
+        // debugging purposes only
         printf("Tried to free a non-existent object\n");
         return;
     }
-
-// printf("Freeing actor (%d): %p\n", Z_COUNTED_P(target_actor->actor)->gc.u.v.type, target_actor);
 
     remove_actor(target_actor);
     zend_object_std_dtor(obj);
@@ -413,20 +391,25 @@ void php_actor_free_object(zend_object *obj)
 
 zval *receive_block(zval *actor)
 {
-    // ...
+    // to be implemented...
+
     return actor; // shutup
 }
 
 void shutdown_actor_system()
 {
-    actor_system_alive = 0;
+    php_shutdown = 1;
 }
 
 
 ZEND_BEGIN_ARG_INFO(ActorSystem_construct_arginfo, 0)
+ZEND_ARG_INFO(0, flag)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO(ActorSystem_shutdown_arginfo, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO(ActorSystem_block_arginfo, 0)
 ZEND_END_ARG_INFO()
 
 
@@ -453,10 +436,10 @@ ZEND_END_ARG_INFO()
 
 
 
-/* {{{ proto string Actor::__construct() */
+/* {{{ proto string ActorSystem::__construct() */
 PHP_METHOD(ActorSystem, __construct)
 {
-	if (zend_parse_parameters_none() != SUCCESS) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "|b", &daemonise_actor_system) != SUCCESS) {
 		return;
 	}
 
@@ -464,7 +447,7 @@ PHP_METHOD(ActorSystem, __construct)
 }
 /* }}} */
 
-/* {{{ proto string Actor::__construct() */
+/* {{{ proto string ActorSystem::shutdown() */
 PHP_METHOD(ActorSystem, shutdown)
 {
 	if (zend_parse_parameters_none() != SUCCESS) {
@@ -475,13 +458,28 @@ PHP_METHOD(ActorSystem, shutdown)
 }
 /* }}} */
 
+/* {{{ proto string ActorSystem::block() */
+PHP_METHOD(ActorSystem, block)
+{
+	if (zend_parse_parameters_none() != SUCCESS) {
+		return;
+	}
+
+    if (daemonise_actor_system == 0) {
+        php_shutdown = 1;
+    }
+
+    pthread_join(scheduler_thread, NULL);
+}
+/* }}} */
+
 /* {{{ proto string Actor::__construct() */
 PHP_METHOD(Actor, __construct)
 {
 	if (zend_parse_parameters_none() != SUCCESS) {
 		return;
 	}
-    // ((php_indexed_t*) (((char*)Z_OBJ_P(getThis())) - XtOffsetOf(php_indexed_t, std)))
+
     initialise_actor_object(getThis());
 }
 /* }}} */
@@ -539,6 +537,7 @@ PHP_METHOD(Actor, receiveBlock)
 zend_function_entry ActorSystem_methods[] = {
     PHP_ME(ActorSystem, __construct, ActorSystem_construct_arginfo, ZEND_ACC_PUBLIC)
 	PHP_ME(ActorSystem, shutdown, ActorSystem_shutdown_arginfo, ZEND_ACC_PUBLIC)
+    PHP_ME(ActorSystem, block, ActorSystem_block_arginfo, ZEND_ACC_PUBLIC)
 	PHP_FE_END
 }; /* }}} */
 
@@ -613,6 +612,7 @@ static void php_phactor_init_globals(zend_phactor_globals *phactor_globals)
 PHP_MINIT_FUNCTION(phactor)
 {
     php_phactor_init();
+
 	return SUCCESS;
 }
 /* }}} */
@@ -625,13 +625,14 @@ PHP_MSHUTDOWN_FUNCTION(phactor)
 	UNREGISTER_INI_ENTRIES();
 	*/
 
-    pthread_join(scheduler_thread, NULL);
+    // doesn't work
+    // php_shutdown = 1;
+    // pthread_join(scheduler_thread, NULL);
 
 	return SUCCESS;
 }
 /* }}} */
 
-/* Remove if there's nothing to do at request start */
 /* {{{ PHP_RINIT_FUNCTION
  */
 PHP_RINIT_FUNCTION(phactor)
@@ -639,6 +640,18 @@ PHP_RINIT_FUNCTION(phactor)
 #if defined(COMPILE_DL_PHACTOR) && defined(ZTS)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ PHP_RSHUTDOWN_FUNCTION
+ */
+PHP_RSHUTDOWN_FUNCTION(phactor)
+{
+    // doesn't work
+    // php_shutdown = 1;
+    // pthread_join(scheduler_thread, NULL);
+
 	return SUCCESS;
 }
 /* }}} */
@@ -660,9 +673,11 @@ zend_module_entry phactor_module_entry = {
 	"phactor",
 	NULL,
 	PHP_MINIT(phactor),
-	NULL,
-	PHP_RINIT(phactor),		/* Replace with NULL if there's nothing to do at request start */
-	NULL,
+	// PHP_MSHUTDOWN(phactor),
+    NULL,
+	PHP_RINIT(phactor),
+	// PHP_RSHUTDOWN(phactor),
+    NULL,
 	PHP_MINFO(phactor),
 	PHP_PHACTOR_VERSION,
 	STANDARD_MODULE_PROPERTIES
