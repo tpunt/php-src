@@ -109,8 +109,8 @@ void send_message(struct Task *task)
         send_local_message(task);
     }
 
-    efree(task->task.smt.message->message);
-    efree(task->task.smt.message);
+    // efree(task->task.smt.message->message);
+    // efree(task->task.smt.message);
 
     dequeue_task(task);
 }
