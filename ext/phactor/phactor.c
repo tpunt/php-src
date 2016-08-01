@@ -16,10 +16,6 @@
   +----------------------------------------------------------------------+
 */
 
-/*
-
-*/
-
 /* $Id$ */
 
 #ifdef HAVE_CONFIG_H
@@ -30,6 +26,7 @@
 #include "php_ini.h"
 #include "ext/standard/info.h"
 #include "php_phactor.h"
+#include "php_phactor_debug.h"
 #include "ext/standard/php_rand.h"
 #include "ext/standard/php_var.h"
 #include "zend_interfaces.h"
@@ -42,32 +39,6 @@
 ZEND_DECLARE_MODULE_GLOBALS(phactor)
 */
 
-struct ActorSystem {
-    // char system_reference[10]; // not needed until remote actors are introduced
-    struct Actor *actors;
-};
-
-struct Actor {
-    zval *actor;
-    struct Mailbox *mailbox;
-    struct Actor *next;
-    zend_string *actor_ref;
-};
-
-struct Mailbox {
-    zval message;
-    struct Mailbox *next;
-};
-
-struct TaskQueue {
-    struct Task *task;
-};
-
-struct Task {
-    struct Actor *actor;
-    struct Task *next_task;
-};
-
 static int php_shutdown = 0;
 static zend_bool daemonise_actor_system = 0;
 static pthread_t scheduler_thread;
@@ -76,42 +47,12 @@ static zend_object_handlers php_actor_system_handler;
 struct ActorSystem actor_system;
 struct TaskQueue tasks;
 
+// for object hashing - needed?
+static intptr_t     hash_mask_handle;
+static intptr_t     hash_mask_handlers;
+static int          hash_mask_init;
 
 
-void remove_actor_from_task_queue(struct Actor *actor)
-{
-    struct Task *previous_task = tasks.task;
-    struct Task *current_task = tasks.task;
-
-    if (previous_task->actor == actor) {
-        tasks.task = tasks.task->next_task;
-        efree(current_task);
-        return;
-    }
-
-    while (current_task->actor != actor) {
-        previous_task = current_task;
-        current_task = current_task->next_task;
-    }
-
-    previous_task->next_task = current_task->next_task;
-
-    efree(current_task);
-}
-
-void process_message(struct Actor *actor)
-{
-    struct Mailbox *mail = actor->mailbox;
-    zval *return_value = emalloc(sizeof(zval));
-
-    actor->mailbox = actor->mailbox->next;
-    zend_call_method_with_1_params(actor->actor, Z_OBJCE_P(actor->actor), NULL, "receive", return_value, &mail->message);
-
-    zval_ptr_dtor(&mail->message);
-    efree(mail);
-    efree(return_value); // remove this line (return the value instead? Or store it elsewhere?)
-    remove_actor_from_task_queue(actor);
-}
 
 void *scheduler()
 {
@@ -127,16 +68,78 @@ void *scheduler()
             continue;
         }
 
-        if (current_task->actor->mailbox == NULL) {
-            continue;
+        switch (current_task->task_type) {
+            case SEND_MESSAGE_TASK:
+                send_message(current_task);
+                break;
+            case PROCESS_MESSAGE_TASK:
+                process_message(current_task);
+                break;
         }
-
-        process_message(current_task->actor);
 
         current_task = current_task->next_task;
     }
 
     return NULL;
+}
+
+void process_message(struct Task *task)
+{
+    struct Mailbox *mail = task->task.pmt.actor->mailbox;
+    struct Actor *actor = task->task.pmt.actor;
+    zval *return_value = emalloc(sizeof(zval));
+
+    actor->mailbox = actor->mailbox->next_message;
+
+    // first NULL: Z_OBJCE_P(actor->actor)
+    zend_call_method_with_1_params(actor->actor, NULL, NULL, "receive", return_value, mail->message);
+
+    zval_ptr_dtor(mail->message);
+    efree(mail->message);
+    efree(mail);
+    efree(return_value); // remove this line (return the value instead? Or store it elsewhere?)
+    dequeue_task(task);
+}
+
+void send_message(struct Task *task)
+{
+    if (task->task.smt.to_actor == NULL) {
+        send_remote_message(task);
+    } else {
+        send_local_message(task);
+    }
+
+    efree(task->task.smt.message->message);
+    efree(task->task.smt.message);
+
+    dequeue_task(task);
+}
+
+void send_local_message(struct Task *task)
+{
+    struct Actor *actor = task->task.smt.to_actor;
+    struct Mailbox *previous_message = actor->mailbox;
+    struct Mailbox *current_message = actor->mailbox;
+
+    if (previous_message == NULL) {
+        actor->mailbox = task->task.smt.message;
+    } else {
+        while (current_message != NULL) {
+            previous_message = current_message;
+            current_message = current_message->next_message;
+        }
+
+        previous_message->next_message = task->task.smt.message;
+    }
+
+    enqueue_task(create_process_message_task(actor));
+}
+
+void send_remote_message(struct Task *task)
+{
+    // debugging purposes only - no implementation yet
+    printf("Tried to send a message to a non-existent (or remote) actor\n");
+    assert(0);
 }
 
 void initialise_actor_system()
@@ -147,10 +150,6 @@ void initialise_actor_system()
 
     pthread_create(&scheduler_thread, NULL, scheduler, NULL);
 }
-
-intptr_t     hash_mask_handle;
-intptr_t     hash_mask_handlers;
-int          hash_mask_init;
 
 zend_string *spl_object_hash(zend_object *obj)
 {
@@ -172,40 +171,9 @@ zend_string *spl_object_hash(zend_object *obj)
 	return strpprintf(32, "%016lx%016lx", hash_handle, hash_handlers);
 }
 
-zend_string *spl_zval_object_hash(zval *zval_obj) /* {{{*/
+zend_string *spl_zval_object_hash(zval *zval_obj)
 {
     return spl_object_hash(Z_OBJ_P(zval_obj));
-}
-/* }}} */
-
-void debug_tasks()
-{
-    struct Task *current_task = tasks.task;
-    int task_count = 0;
-
-    printf("Debugging tasks:\n");
-
-    while (current_task != NULL) {
-        printf("%d) actor: %p\n", ++task_count, current_task->actor);
-        current_task = current_task->next_task;
-    }
-
-    printf("\n");
-}
-
-void debug_actor_system()
-{
-    struct Actor *current_actor = actor_system.actors;
-    int actor_count = 0;
-
-    printf("Debugging actors:\n");
-
-    while (current_actor != NULL) {
-        printf("%d) ref: %32s, actor: %p, actor_obj: %p\n", ++actor_count, current_actor->actor_ref->val, current_actor, current_actor->actor);
-        current_actor = current_actor->next;
-    }
-
-    printf("\n");
 }
 
 struct Actor *get_actor_from_hash(zend_string *actor_object_ref)
@@ -272,23 +240,41 @@ void add_new_actor(zval *actor_zval)
     previous_actor->next = new_actor;
 }
 
-struct Mailbox *create_new_message(zval *message)
+struct Task *create_send_message_task(zval *actor_zval, zval *message)
 {
-    struct Mailbox *new_message = emalloc(sizeof(struct Mailbox));
-    ZVAL_COPY(&new_message->message, message);
-    new_message->next = NULL;
+    struct Actor *actor = get_actor_from_zval(actor_zval);
+    struct Task *new_task = emalloc(sizeof(struct Task));
 
-    return new_message;
+    if (actor == NULL) {
+        // debugging purposes only
+        printf("Tried to send a message to a non-existent actor\n");
+        assert(0);
+        // return NULL;
+    }
+
+    new_task->task.smt.to_actor = actor;
+    new_task->task.smt.message = create_new_message(message);
+    new_task->task_type = SEND_MESSAGE_TASK;
+    new_task->next_task = NULL;
+
+    return new_task;
 }
 
-void add_actor_to_task_queue(struct Actor *actor)
+struct Task *create_process_message_task(struct Actor *actor)
+{
+    struct Task *new_task = emalloc(sizeof(struct Task));
+
+    new_task->task.pmt.actor = actor;
+    new_task->task_type = PROCESS_MESSAGE_TASK;
+    new_task->next_task = NULL;
+
+    return new_task;
+}
+
+void enqueue_task(struct Task *new_task)
 {
     struct Task *previous_task = tasks.task;
     struct Task *current_task = tasks.task;
-    struct Task *new_task = emalloc(sizeof(struct Task));
-
-    new_task->actor = actor;
-    new_task->next_task = NULL;
 
     if (previous_task == NULL) {
         tasks.task = new_task;
@@ -303,33 +289,35 @@ void add_actor_to_task_queue(struct Actor *actor)
     previous_task->next_task = new_task;
 }
 
-void send_message(zval *actor_zval, zval *message)
+void dequeue_task(struct Task *task)
 {
-    struct Actor *actor = get_actor_from_zval(actor_zval);
+    struct Task *previous_task = tasks.task;
+    struct Task *current_task = tasks.task;
 
-    if (actor == NULL) {
-        // debugging purposes only
-        printf("Tried to send a message to a non-existent actor\n");
+    if (previous_task == task) {
+        tasks.task = tasks.task->next_task;
+        efree(task);
         return;
     }
 
-    struct Mailbox *previous_message = actor->mailbox;
-    struct Mailbox *current_message = actor->mailbox;
-    struct Mailbox *new_message = create_new_message(message);
-
-    if (previous_message == NULL) {
-        actor->mailbox = new_message;
-        add_actor_to_task_queue(actor);
-        return;
+    while (current_task != task) {
+        previous_task = current_task;
+        current_task = current_task->next_task;
     }
 
-    while (current_message != NULL) {
-        previous_message = current_message;
-        current_message = current_message->next;
-    }
+    previous_task->next_task = current_task->next_task;
 
-    previous_message->next = new_message;
-    add_actor_to_task_queue(actor);
+    efree(task);
+}
+
+struct Mailbox *create_new_message(zval *message)
+{
+    struct Mailbox *new_message = emalloc(sizeof(struct Mailbox));
+    new_message->message = emalloc(sizeof(zval));
+    ZVAL_COPY(new_message->message, message);
+    new_message->next_message = NULL;
+
+    return new_message;
 }
 
 void initialise_actor_object(zval *actor)
@@ -396,10 +384,20 @@ zval *receive_block(zval *actor)
     return actor; // shutup
 }
 
-void shutdown_actor_system()
+void force_shutdown_actor_system()
 {
     php_shutdown = 1;
 }
+
+void scheduler_blocking()
+{
+    if (daemonise_actor_system == 0) {
+        php_shutdown = 1;
+    }
+
+    pthread_join(scheduler_thread, NULL);
+}
+
 
 
 ZEND_BEGIN_ARG_INFO(ActorSystem_construct_arginfo, 0)
@@ -454,7 +452,7 @@ PHP_METHOD(ActorSystem, shutdown)
 		return;
 	}
 
-    shutdown_actor_system();
+    force_shutdown_actor_system();
 }
 /* }}} */
 
@@ -465,11 +463,7 @@ PHP_METHOD(ActorSystem, block)
 		return;
 	}
 
-    if (daemonise_actor_system == 0) {
-        php_shutdown = 1;
-    }
-
-    pthread_join(scheduler_thread, NULL);
+    scheduler_blocking();
 }
 /* }}} */
 
@@ -498,14 +492,14 @@ PHP_METHOD(Actor, __destruct)
 /* {{{ proto string Actor::send(Actor $actor, mixed $message) */
 PHP_METHOD(Actor, send)
 {
-    zval *actor;
+    zval *actor_zval;
     zval *message;
 
-	if (zend_parse_parameters(ZEND_NUM_ARGS(), "oz", &actor, &message) != SUCCESS) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "oz", &actor_zval, &message) != SUCCESS) {
 		return;
 	}
 
-    send_message(actor, message);
+    enqueue_task(create_send_message_task(actor_zval, message));
 }
 /* }}} */
 
@@ -554,7 +548,6 @@ zend_function_entry Actor_methods[] = {
 
 
 
-/* {{{ */
 void initialise_actor_system_class(void)
 {
     zend_class_entry ce;
@@ -571,7 +564,6 @@ void initialise_actor_system_class(void)
 	php_actor_system_handler.get_properties = NULL;
 }
 
-/* {{{ */
 void initialise_actor_class(void)
 {
     zend_class_entry ce;
@@ -589,12 +581,11 @@ void initialise_actor_class(void)
     php_actor_handler.dtor_obj = php_actor_free_object;
 }
 
-/* {{{ */
 void php_phactor_init(void)
 {
     initialise_actor_system_class();
     initialise_actor_class();
-} /* }}} */
+}
 
 /* {{{ php_phactor_init_globals
  */
@@ -626,8 +617,7 @@ PHP_MSHUTDOWN_FUNCTION(phactor)
 	*/
 
     // doesn't work
-    // php_shutdown = 1;
-    // pthread_join(scheduler_thread, NULL);
+    // scheduler_blocking()
 
 	return SUCCESS;
 }
@@ -649,8 +639,7 @@ PHP_RINIT_FUNCTION(phactor)
 PHP_RSHUTDOWN_FUNCTION(phactor)
 {
     // doesn't work
-    // php_shutdown = 1;
-    // pthread_join(scheduler_thread, NULL);
+    // scheduler_blocking()
 
 	return SUCCESS;
 }

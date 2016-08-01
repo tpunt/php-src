@@ -56,10 +56,76 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 /* {{{ */
 zend_class_entry *ActorSystem_ce;
-zend_class_entry *Actor_ce; /* }}} */
+zend_class_entry *Actor_ce;
+/* }}} */
 
 /* {{{ */
-void php_actor_send(zval *actor, zval *message);
+#define PROCESS_MESSAGE_TASK 1
+#define SEND_MESSAGE_TASK 2
+/* }}} */
+
+/* {{{ */
+struct ActorSystem {
+    // char system_reference[10]; // not needed until remote actors are introduced
+    struct Actor *actors;
+};
+
+struct Actor {
+    zval *actor;
+    struct Mailbox *mailbox;
+    struct Actor *next;
+    zend_string *actor_ref;
+};
+
+struct Mailbox {
+    zval *message;
+    struct Mailbox *next_message;
+};
+
+struct TaskQueue {
+    struct Task *task;
+};
+
+struct ProcessMessageTask {
+    struct Actor *actor;
+};
+
+struct SendMessageTask {
+    // struct Actor *from_actor; // to do
+    struct Actor *to_actor;
+    struct Mailbox *message;
+};
+
+struct Task {
+    union {
+        struct ProcessMessageTask pmt;
+        struct SendMessageTask smt;
+    } task;
+    int task_type;
+    struct Task *next_task;
+};
+/* }}} */
+
+/* {{{ */
+void *scheduler();
+void process_message(struct Task *task);
+void enqueue_task(struct Task *task);
+void dequeue_task(struct Task *task);
+zend_string *spl_object_hash(zend_object *obj);
+zend_string *spl_zval_object_hash(zval *zval_obj);
+struct Actor *get_actor_from_hash(zend_string *actor_object_ref);
+struct Actor *get_actor_from_object(zend_object *actor_obj);
+struct Actor *get_actor_from_zval(zval *actor_zval_obj);
+struct Actor *create_new_actor(zval *actor_zval);
+struct Task *create_send_message_task(zval *actor_zval, zval *message);
+struct Task *create_process_message_task(struct Actor *actor);
+void add_new_actor(zval *actor_zval);
+struct Mailbox *create_new_message(zval *message);
+void send_message(struct Task *task);
+void send_local_message(struct Task *task);
+void send_remote_message(struct Task *task);
+void initialise_actor_system();
+/* }}} */
 
 #endif	/* PHP_PHACTOR_H */
 
