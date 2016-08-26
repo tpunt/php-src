@@ -64,6 +64,11 @@ zend_class_entry *Actor_ce;
 #define SEND_MESSAGE_TASK 2
 /* }}} */
 
+struct _phactor_globals {
+    pthread_mutex_t task_queue_mutex;
+    pthread_mutex_t actor_list_mutex;
+};
+
 /* {{{ */
 struct ActorSystem {
     // char system_reference[10]; // not needed until remote actors are introduced
@@ -71,7 +76,7 @@ struct ActorSystem {
 };
 
 struct Actor {
-    zval *actor;
+    zend_object actor;
     struct Mailbox *mailbox;
     struct Actor *next;
     zend_string *actor_ref;
@@ -113,13 +118,15 @@ void enqueue_task(struct Task *task);
 void dequeue_task(struct Task *task);
 zend_string *spl_object_hash(zend_object *obj);
 zend_string *spl_zval_object_hash(zval *zval_obj);
+zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, int param_count, zval* arg1);
 struct Actor *get_actor_from_hash(zend_string *actor_object_ref);
 struct Actor *get_actor_from_object(zend_object *actor_obj);
 struct Actor *get_actor_from_zval(zval *actor_zval_obj);
-struct Actor *create_new_actor(zval *actor_zval);
+// struct Actor *create_new_actor(zval *actor_zval);
 struct Task *create_send_message_task(zval *actor_zval, zval *message);
 struct Task *create_process_message_task(struct Actor *actor);
-void add_new_actor(zval *actor_zval);
+zend_object* phactor_actor_ctor(zend_class_entry *entry);
+void add_new_actor(struct Actor *new_actor);
 struct Mailbox *create_new_message(zval *message);
 void send_message(struct Task *task);
 void send_local_message(struct Task *task);

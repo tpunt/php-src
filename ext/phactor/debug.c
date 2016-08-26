@@ -62,7 +62,8 @@ void debug_actor_system(struct ActorSystem actor_system)
     printf("Debugging actors:\n");
 
     while (current_actor != NULL) {
-        printf("%d) ref: %32s, actor: %p, actor_obj: %p\n", ++actor_count, current_actor->actor_ref->val, current_actor, current_actor->actor);
+        // printf("%d) ref: %32s, actor: %p, actor_obj: %p\n", ++actor_count, current_actor->actor_ref->val, current_actor, current_actor->actor);
+        printf("%d) actor: %p, object ref: %u\n", ++actor_count, current_actor, current_actor->actor.handle);
         current_actor = current_actor->next;
     }
 

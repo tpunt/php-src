@@ -42,23 +42,28 @@ ZEND_DECLARE_MODULE_GLOBALS(phactor)
 static int php_shutdown = 0;
 static zend_bool daemonise_actor_system = 0;
 static pthread_t scheduler_thread;
-static zend_object_handlers php_actor_handler;
-static zend_object_handlers php_actor_system_handler;
+static zend_object_handlers phactor_actor_handlers;
+static zend_object_handlers phactor_actor_system_handlers;
 struct ActorSystem actor_system;
 struct TaskQueue tasks;
+struct _phactor_globals phactor_globals;
 
-// for object hashing - needed?
-static intptr_t     hash_mask_handle;
-static intptr_t     hash_mask_handlers;
-static int          hash_mask_init;
+int thread_count;
+pthread_t *worker_threads; // create own struct instead
 
+/*
+Get the scheduler to spin up X threads ?? Scheduler must be aware of the threads, but convolutes its responsibility
+Recreate the execution contexts in each thread
 
+*/
 
-void *scheduler()
+void *worker_function()
 {
     struct Task *current_task = tasks.task;
 
     while (1) {
+        pthread_mutex_lock(&phactor_globals.task_queue_mutex);
+
         if (php_shutdown && tasks.task == NULL) {
             break;
         }
@@ -78,7 +83,30 @@ void *scheduler()
         }
 
         current_task = current_task->next_task;
+
+        pthread_mutex_unlock(&phactor_globals.task_queue_mutex);
     }
+
+    return NULL;
+}
+
+void initialise_worker_thread_environments()
+{
+    //
+}
+
+void *scheduler_startup()
+{
+    thread_count = sysconf(_SC_NPROCESSORS_ONLN);
+    worker_threads = malloc(sizeof(pthread_t) * thread_count);
+
+    for (int i = 0; i < thread_count; i += sizeof(pthread_t)) {
+        pthread_create(&worker_threads[i], NULL, worker_function, NULL);
+    }
+
+    initialise_worker_thread_environments();
+
+    // scheduler();
 
     return NULL;
 }
@@ -87,17 +115,36 @@ void process_message(struct Task *task)
 {
     struct Mailbox *mail = task->task.pmt.actor->mailbox;
     struct Actor *actor = task->task.pmt.actor;
-    zval *return_value = emalloc(sizeof(zval));
+    zval *return_value = malloc(sizeof(zval));
 
     actor->mailbox = actor->mailbox->next_message;
 
-    // first NULL: Z_OBJCE_P(actor->actor)
-    zend_call_method_with_1_params(actor->actor, NULL, NULL, "receive", return_value, mail->message);
+    // zend_string *rec = zend_string_init(ZEND_STRL("run"), 1);
+    // zend_function *receive;
+	// pthreads_call_t call = PTHREADS_CALL_EMPTY;
+	// zval zresult;
+    // if ((receive = zend_hash_find_ptr(&task->task.pmt->actor.ce->function_table, rec))) {
+	// 	if (receive->type == ZEND_USER_FUNCTION) {
+	// 		call.fci.size = sizeof(zend_fcall_info);
+	// 	    call.fci.retval = return_value;
+	// 		call.fci.object = &task->task.pmt->actor;
+	// 		call.fci.no_separation = 1;
+	// 		call.fcc.initialized = 1;
+	// 		call.fcc.object = &task->task.pmt->actor;
+	// 		call.fcc.calling_scope = task->task.pmt->actor.ce;
+	// 		call.fcc.called_scope = task->task.pmt->actor.ce;
+	// 		call.fcc.function_handler = receive;
+    //
+	// 		zend_call_function(&call.fci, &call.fcc);
+	// 	}
+	// }
+
+    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, 1, mail->message);
 
     zval_ptr_dtor(mail->message);
-    efree(mail->message);
-    efree(mail);
-    efree(return_value); // remove this line (return the value instead? Or store it elsewhere?)
+    free(mail->message);
+    free(mail);
+    free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
     dequeue_task(task);
 }
 
@@ -134,95 +181,166 @@ void send_local_message(struct Task *task)
 
 void send_remote_message(struct Task *task)
 {
-    // debugging purposes only - no implementation yet
+    // @todo debugging purposes only - no implementation yet
     printf("Tried to send a message to a non-existent (or remote) actor\n");
     assert(0);
 }
 
 void initialise_actor_system()
 {
-    // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable (also gives logical, not physical core count)
+    // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable (also gives logical, not physical core count - good/bad?)
 
     tasks.task = NULL;
 
-    pthread_create(&scheduler_thread, NULL, scheduler, NULL);
+    pthread_create(&scheduler_thread, NULL, scheduler_startup, NULL);
 }
 
+/* {{{ zend_call_method
+ Only returns the returned zval if retval_ptr != NULL */
+zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, int param_count, zval* arg1)
+{
+    int result;
+    zend_fcall_info fci;
+    zval retval;
+    zend_class_entry *obj_ce;
+    zval params[1];
+
+    ZVAL_COPY_VALUE(&params[0], arg1);
+
+    fci.size = sizeof(fci);
+    fci.object = &object;
+
+    zend_string *zstr = malloc(_ZSTR_STRUCT_SIZE(function_name_len));
+    GC_REFCOUNT(zstr) = 1;
+    GC_TYPE_INFO(zstr) = IS_STRING;
+    zend_string_forget_hash_val(zstr);
+    ZSTR_LEN(zstr) = function_name_len;
+    memcpy(ZSTR_VAL(zstr), function_name, function_name_len);
+    ZSTR_VAL(zstr)[function_name_len] = '\0';
+
+    ZVAL_NEW_STR(&fci.function_name, zstr);
+
+    fci.retval = retval_ptr ? retval_ptr : &retval;
+    fci.param_count = param_count;
+    fci.params = params;
+    fci.no_separation = 1;
+
+    /* no interest in caching and no information already present that is
+     * needed later inside zend_call_function. */
+    result = zend_call_function(&fci, NULL);
+    zval_ptr_dtor(&fci.function_name);
+
+    if (result == FAILURE) {
+        /* error at c-level */
+        obj_ce = object.ce;
+
+        if (!EG(exception)) {
+            zend_error_noreturn(E_CORE_ERROR, "Couldn't execute method %s%s%s", obj_ce ? ZSTR_VAL(obj_ce->name) : "", obj_ce ? "::" : "", function_name);
+        }
+    }
+    /* copy arguments back, they might be changed by references */
+    if (Z_ISREF(params[0]) && !Z_ISREF_P(arg1)) {
+        ZVAL_COPY_VALUE(arg1, &params[0]);
+    }
+    if (!retval_ptr) {
+        zval_ptr_dtor(&retval);
+        return NULL;
+    }
+    return retval_ptr;
+}
+/* }}} */
+
+// unused for now
 zend_string *spl_object_hash(zend_object *obj)
 {
-    intptr_t hash_handle, hash_handlers;
-
-	if (!hash_mask_init) {
-		if (!BG(mt_rand_is_seeded)) {
-			php_mt_srand((uint32_t)GENERATE_SEED());
-		}
-
-		hash_mask_handle = (intptr_t)(php_mt_rand() >> 1);
-		hash_mask_handlers = (intptr_t)(php_mt_rand() >> 1);
-		hash_mask_init = 1;
-	}
-
-	hash_handle   = hash_mask_handle ^(intptr_t)obj->handle;
-	hash_handlers = hash_mask_handlers;
-
-	return strpprintf(32, "%016lx%016lx", hash_handle, hash_handlers);
+    // this is for when remote actors are introduced - not needed for now
+    return strpprintf(20, "%s:%08d", "node_id_here", obj->handle);
 }
 
+// unused for now - may not be needed...
 zend_string *spl_zval_object_hash(zval *zval_obj)
 {
     return spl_object_hash(Z_OBJ_P(zval_obj));
 }
 
-struct Actor *get_actor_from_hash(zend_string *actor_object_ref)
+struct Actor *get_actor_from_object(zend_object *actor_obj)
 {
     struct Actor *current_actor = actor_system.actors;
 
     if (current_actor == NULL) {
-        printf("Trying to get actor hash from no actors\n");
-        return NULL;
-    }
+        printf("Trying to get actor hash from no actors\n"); // @debug debugging only for now (remove later and invert condition)
+    } else {
+        while (current_actor != NULL && current_actor->actor.handle != actor_obj->handle) {
+            current_actor = current_actor->next;
+        }
 
-    while (strncmp(current_actor->actor_ref->val, actor_object_ref->val, sizeof(char) * 32) != 0) {
-        current_actor = current_actor->next;
-
-        if (current_actor == NULL) {
-            return NULL;
+        if (current_actor != NULL) {
+            return current_actor;
         }
     }
 
-    zend_string_free(actor_object_ref);
+    // we did not find the actor locally, so it should be a remote actor then
+    // this may be segregated into a new function, if remote actors are implemented as separate objects
 
-    return current_actor;
-}
+    return NULL; // @todo remote actors have not been implemented yet
 
-struct Actor *get_actor_from_object(zend_object *actor_obj)
-{
-    return get_actor_from_hash(spl_object_hash(actor_obj));
+    // get actor hash (a UUID basically, so that actors are unique in the node cluster)
+
+    // while (strncmp(current_actor->actor_ref->val, actor_object_ref->val, sizeof(char) * 32) != 0) {
+    //     current_actor = current_actor->next;
+    //
+    //     if (current_actor == NULL) { // debugging only - will not work for remote actors
+    //         return NULL;
+    //     }
+    // }
+
+    // zend_string_free(actor_object_ref);
+
+    // return current_actor;
 }
 
 struct Actor *get_actor_from_zval(zval *actor_zval_obj)
 {
-    return get_actor_from_hash(spl_zval_object_hash(actor_zval_obj));
+    return get_actor_from_object(Z_OBJ_P(actor_zval_obj));
 }
 
-struct Actor *create_new_actor(zval *actor_zval)
+zend_object* phactor_actor_ctor(zend_class_entry *entry)
 {
-    struct Actor *new_actor = emalloc(sizeof(struct Actor));
-    new_actor->actor = emalloc(sizeof(zval));
+    struct Actor *new_actor = ecalloc(1, sizeof(struct Actor));// + zend_object_properties_size(entry));
 
-    ZVAL_COPY(new_actor->actor, actor_zval);
-    new_actor->actor_ref = spl_zval_object_hash(actor_zval);
+    // @todo create the UUID on actor creation - this is needed for remote actors only
+    // new_actor->actor_ref = spl_zval_object_hash(actor_zval);
     new_actor->next = NULL;
     new_actor->mailbox = NULL;
 
-    return new_actor;
+    zend_object_std_init(&new_actor->actor, entry);
+	// object_properties_init(&new_actor->actor, entry);
+
+    new_actor->actor.handlers = &phactor_actor_handlers;
+
+    add_new_actor(new_actor);
+
+	return &new_actor->actor;
 }
 
-void add_new_actor(zval *actor_zval)
+// no longer needed?
+// struct Actor *create_new_actor(zend_class_entry *entry)
+// {
+//     struct Actor *new_actor = malloc(sizeof(struct Actor));
+//     // new_actor->actor = malloc(sizeof(zval));
+//
+//     ZVAL_COPY(new_actor->actor, actor_zval);
+//     new_actor->actor_ref = spl_zval_object_hash(actor_zval);
+//     new_actor->next = NULL;
+//     new_actor->mailbox = NULL;
+//
+//     return new_actor;
+// }
+
+void add_new_actor(struct Actor *new_actor)
 {
     struct Actor *previous_actor = actor_system.actors;
     struct Actor *current_actor = actor_system.actors;
-    struct Actor *new_actor = create_new_actor(actor_zval);
 
     if (previous_actor == NULL) {
         actor_system.actors = new_actor;
@@ -240,7 +358,7 @@ void add_new_actor(zval *actor_zval)
 struct Task *create_send_message_task(zval *actor_zval, zval *message)
 {
     struct Actor *actor = get_actor_from_zval(actor_zval);
-    struct Task *new_task = emalloc(sizeof(struct Task));
+    struct Task *new_task = malloc(sizeof(struct Task));
 
     if (actor == NULL) {
         // debugging purposes only
@@ -259,7 +377,7 @@ struct Task *create_send_message_task(zval *actor_zval, zval *message)
 
 struct Task *create_process_message_task(struct Actor *actor)
 {
-    struct Task *new_task = emalloc(sizeof(struct Task));
+    struct Task *new_task = malloc(sizeof(struct Task));
 
     new_task->task.pmt.actor = actor;
     new_task->task_type = PROCESS_MESSAGE_TASK;
@@ -293,7 +411,7 @@ void dequeue_task(struct Task *task)
 
     if (previous_task == task) {
         tasks.task = tasks.task->next_task;
-        efree(task);
+        free(task);
         return;
     }
 
@@ -304,23 +422,23 @@ void dequeue_task(struct Task *task)
 
     previous_task->next_task = current_task->next_task;
 
-    efree(task);
+    free(task);
 }
 
 struct Mailbox *create_new_message(zval *message)
 {
-    struct Mailbox *new_message = emalloc(sizeof(struct Mailbox));
-    new_message->message = emalloc(sizeof(zval));
+    struct Mailbox *new_message = malloc(sizeof(struct Mailbox));
+    new_message->message = malloc(sizeof(zval));
     ZVAL_COPY(new_message->message, message);
     new_message->next_message = NULL;
 
     return new_message;
 }
 
-void initialise_actor_object(zval *actor)
-{
-    add_new_actor(actor);
-}
+// void initialise_actor_object(zval *actor)
+// {
+//     add_new_actor(actor);
+// }
 
 void remove_actor(struct Actor *target_actor)
 {
@@ -334,20 +452,20 @@ void remove_actor(struct Actor *target_actor)
 
         if (current_actor == target_actor) {
             actor_system.actors = current_actor->next;
-            zval_ptr_dtor(target_actor->actor);
-            efree(target_actor->actor);
-            zend_string_free(target_actor->actor_ref);
-            efree(target_actor);
+            // zval_ptr_dtor(target_actor->actor);
+            // free(target_actor->actor);
+            // zend_string_free(target_actor->actor_ref);
+            free(target_actor);
             return;
         }
 
         while (current_actor != target_actor) {
             if (current_actor->next == target_actor) {
                 current_actor->next = current_actor->next->next;
-                zval_ptr_dtor(target_actor->actor);
-                efree(target_actor->actor);
-                zend_string_free(target_actor->actor_ref);
-                efree(target_actor);
+                // zval_ptr_dtor(target_actor->actor);
+                // free(target_actor->actor);
+                // zend_string_free(target_actor->actor_ref);
+                free(target_actor);
                 break;
             }
 
@@ -408,12 +526,6 @@ ZEND_BEGIN_ARG_INFO(ActorSystem_block_arginfo, 0)
 ZEND_END_ARG_INFO()
 
 
-ZEND_BEGIN_ARG_INFO(Actor_construct_arginfo, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_INFO(Actor_destruct_arginfo, 0)
-ZEND_END_ARG_INFO()
-
 ZEND_BEGIN_ARG_INFO_EX(Actor_send_arginfo, 0, 0, 1)
 	ZEND_ARG_OBJ_INFO(0, actor, Actor, 0)
 	ZEND_ARG_INFO(0, message)
@@ -464,27 +576,6 @@ PHP_METHOD(ActorSystem, block)
 }
 /* }}} */
 
-/* {{{ proto string Actor::__construct() */
-PHP_METHOD(Actor, __construct)
-{
-	if (zend_parse_parameters_none() != SUCCESS) {
-		return;
-	}
-
-    initialise_actor_object(getThis());
-}
-/* }}} */
-
-/* {{{ proto string Actor::__destruct() */
-PHP_METHOD(Actor, __destruct)
-{
-	if (zend_parse_parameters_none() != SUCCESS) {
-		return;
-	}
-
-    php_actor_free_object(Z_OBJ_P(getThis()));
-}
-/* }}} */
 
 /* {{{ proto string Actor::send(Actor $actor, mixed $message) */
 PHP_METHOD(Actor, send)
@@ -534,11 +625,9 @@ zend_function_entry ActorSystem_methods[] = {
 
 /* {{{ */
 zend_function_entry Actor_methods[] = {
-    PHP_ME(Actor, __construct, Actor_construct_arginfo, ZEND_ACC_PUBLIC)
-    PHP_ME(Actor, __destruct, Actor_destruct_arginfo, ZEND_ACC_PUBLIC)
 	PHP_ME(Actor, send, Actor_send_arginfo, ZEND_ACC_PUBLIC)
     PHP_ME(Actor, remove, Actor_remove_arginfo, ZEND_ACC_PUBLIC)
-    ZEND_FENTRY(receive, NULL, Actor_abstract_receive_arginfo, ZEND_ACC_PUBLIC|ZEND_ACC_ABSTRACT)
+    PHP_ABSTRACT_ME(Actor, receive, Actor_abstract_receive_arginfo)
     PHP_ME(Actor, receiveBlock, Actor_abstract_receiveblock_arginfo, ZEND_ACC_PUBLIC)
 	PHP_FE_END
 }; /* }}} */
@@ -556,9 +645,9 @@ void initialise_actor_system_class(void)
 
 	zh = zend_get_std_object_handlers();
 
-	memcpy(&php_actor_system_handler, zh, sizeof(zend_object_handlers));
+	memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
 
-	php_actor_system_handler.get_properties = NULL;
+	phactor_actor_system_handlers.get_properties = NULL;
 }
 
 void initialise_actor_class(void)
@@ -569,13 +658,14 @@ void initialise_actor_class(void)
 	INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);
 	Actor_ce = zend_register_internal_class(&ce);
 	Actor_ce->ce_flags |= ZEND_ACC_ABSTRACT;
+    Actor_ce->create_object = phactor_actor_ctor;
 
 	zh = zend_get_std_object_handlers();
 
-	memcpy(&php_actor_handler, zh, sizeof(zend_object_handlers));
+	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
 
-	php_actor_handler.get_properties = NULL;
-    php_actor_handler.dtor_obj = php_actor_free_object;
+	phactor_actor_handlers.get_properties = NULL;
+    // phactor_actor_handlers.dtor_obj = php_actor_free_object;
 }
 
 void php_phactor_init(void)
@@ -584,44 +674,36 @@ void php_phactor_init(void)
     initialise_actor_class();
 }
 
-/* {{{ php_phactor_init_globals
- */
-/* Uncomment this function if you have INI entries
-static void php_phactor_init_globals(zend_phactor_globals *phactor_globals)
-{
-	phactor_globals->global_value = 0;
-	phactor_globals->global_string = NULL;
-}
-*/
-/* }}} */
+// void phactor_globals_ctor(zend_phactor_globals *phactor_globals)
+// {
+//     phactor_globals.task_queue_mutex = malloc(sizeof(pthread_mutex_t));
+//     phactor_globals.actor_list_mutex = malloc(sizeof(pthread_mutex_t));
+//
+//     pthread_mutex_init(phactor_globals.task_queue_mutex, NULL);
+//     pthread_mutex_init(phactor_globals.actor_list_mutex, NULL);
+// }
 
-/* {{{ PHP_MINIT_FUNCTION
- */
+
+
+/* {{{ PHP_MINIT_FUNCTION */
 PHP_MINIT_FUNCTION(phactor)
 {
     php_phactor_init();
 
+    // ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
+
 	return SUCCESS;
 }
 /* }}} */
 
-/* {{{ PHP_MSHUTDOWN_FUNCTION
- */
+/* {{{ PHP_MSHUTDOWN_FUNCTION */
 PHP_MSHUTDOWN_FUNCTION(phactor)
 {
-	/* uncomment this line if you have INI entries
-	UNREGISTER_INI_ENTRIES();
-	*/
-
-    // doesn't work
-    // scheduler_blocking()
-
 	return SUCCESS;
 }
 /* }}} */
 
-/* {{{ PHP_RINIT_FUNCTION
- */
+/* {{{ PHP_RINIT_FUNCTION */
 PHP_RINIT_FUNCTION(phactor)
 {
 #if defined(COMPILE_DL_PHACTOR) && defined(ZTS)
@@ -631,19 +713,14 @@ PHP_RINIT_FUNCTION(phactor)
 }
 /* }}} */
 
-/* {{{ PHP_RSHUTDOWN_FUNCTION
- */
+/* {{{ PHP_RSHUTDOWN_FUNCTION */
 PHP_RSHUTDOWN_FUNCTION(phactor)
 {
-    // doesn't work
-    // scheduler_blocking()
-
 	return SUCCESS;
 }
 /* }}} */
 
-/* {{{ PHP_MINFO_FUNCTION
- */
+/* {{{ PHP_MINFO_FUNCTION */
 PHP_MINFO_FUNCTION(phactor)
 {
 	php_info_print_table_start();
@@ -652,8 +729,7 @@ PHP_MINFO_FUNCTION(phactor)
 }
 /* }}} */
 
-/* {{{ phactor_module_entry
- */
+/* {{{ phactor_module_entry */
 zend_module_entry phactor_module_entry = {
 	STANDARD_MODULE_HEADER,
 	"phactor",
