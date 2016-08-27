@@ -29,27 +29,19 @@
 #include "php_phactor_debug.h"
 #include "ext/standard/php_rand.h"
 #include "ext/standard/php_var.h"
+#include "main/php_main.h"
 #include "zend_interfaces.h"
 #include <pthread.h>
 #include <semaphore.h>
 #include <unistd.h>
 #include <assert.h>
 
-/* If you declare any globals in php_phactor.h uncomment this:
 ZEND_DECLARE_MODULE_GLOBALS(phactor)
-*/
 
-static int php_shutdown = 0;
-static zend_bool daemonise_actor_system = 0;
-static pthread_t scheduler_thread;
-static zend_object_handlers phactor_actor_handlers;
-static zend_object_handlers phactor_actor_system_handlers;
-struct ActorSystem actor_system;
-struct TaskQueue tasks;
-struct _phactor_globals phactor_globals;
-
-int thread_count;
-pthread_t *worker_threads; // create own struct instead
+#if COMPILE_DL_PTHREADS
+	ZEND_TSRMLS_CACHE_DEFINE();
+	ZEND_GET_MODULE(pthreads)
+#endif
 
 /*
 Get the scheduler to spin up X threads ?? Scheduler must be aware of the threads, but convolutes its responsibility
@@ -57,19 +49,45 @@ Recreate the execution contexts in each thread
 
 */
 
-void *worker_function()
+thread scheduler_thread;
+pthread_mutex_t phactor_mutex;
+zend_object_handlers phactor_actor_handlers;
+zend_object_handlers phactor_actor_system_handlers;
+void ***phactor_instance = NULL;
+
+void *worker_function(thread *phactor_thread)
 {
-    struct Task *current_task = tasks.task;
+    phactor_thread->id = (ulong) pthread_self();
+    phactor_thread->ls = ts_resource(0);
+    TSRMLS_CACHE_UPDATE();
+
+    pthread_mutex_lock(&phactor_mutex);
+    task *current_task = PHACTOR_ZG(tasks).task;
+
+#define PTHREADS_FETCH_CTX(ls, id, type, element) (((type) (*((void ***) ls))[TSRM_UNSHUFFLE_RSRC_ID(id)])->element)
+#define PTHREADS_SG(ls, v) PTHREADS_FETCH_CTX(ls, sapi_globals_id, sapi_globals_struct*, v)
+#define PTHREADS_PG(ls, v) PTHREADS_FETCH_CTX(ls, core_globals_id, php_core_globals*, v)
+
+    // SG(server_context) = PTHREADS_SG(phactor_thread->)
+
+    PG(expose_php) = 0;
+	PG(auto_globals_jit) = 0;
+
+	php_request_startup();
+
+    // prepare different environment parts
+
+    pthread_mutex_unlock(&phactor_mutex);
 
     while (1) {
-        pthread_mutex_lock(&phactor_globals.task_queue_mutex);
+        pthread_mutex_lock(&PHACTOR_ZG(task_queue_mutex));
 
-        if (php_shutdown && tasks.task == NULL) {
+        if (PHACTOR_ZG(php_shutdown) && PHACTOR_ZG(tasks).task == NULL) {
             break;
         }
 
         if (current_task == NULL) {
-            current_task = tasks.task;
+            current_task = PHACTOR_ZG(tasks).task;
             continue;
         }
 
@@ -84,8 +102,13 @@ void *worker_function()
 
         current_task = current_task->next_task;
 
-        pthread_mutex_unlock(&phactor_globals.task_queue_mutex);
+        pthread_mutex_unlock(&PHACTOR_ZG(task_queue_mutex));
     }
+
+    pthread_mutex_lock(&phactor_mutex);
+    php_request_shutdown((void*) NULL);
+	ts_free_thread();
+    pthread_mutex_unlock(&phactor_mutex);
 
     return NULL;
 }
@@ -97,24 +120,25 @@ void initialise_worker_thread_environments()
 
 void *scheduler_startup()
 {
-    thread_count = sysconf(_SC_NPROCESSORS_ONLN);
-    worker_threads = malloc(sizeof(pthread_t) * thread_count);
+    scheduler_thread.id = (ulong) pthread_self();
+    scheduler_thread.ls = ts_resource(0);
+    TSRMLS_CACHE_UPDATE();
 
-    for (int i = 0; i < thread_count; i += sizeof(pthread_t)) {
-        pthread_create(&worker_threads[i], NULL, worker_function, NULL);
+    PHACTOR_ZG(worker_threads) = malloc(sizeof(thread) * PHACTOR_ZG(thread_count));
+
+    for (int i = 0; i < PHACTOR_ZG(thread_count); i += sizeof(thread)) {
+        pthread_create(&PHACTOR_ZG(worker_threads)[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &PHACTOR_ZG(worker_threads)[i]);
     }
 
     initialise_worker_thread_environments();
 
-    // scheduler();
-
     return NULL;
 }
 
-void process_message(struct Task *task)
+void process_message(task *task)
 {
-    struct Mailbox *mail = task->task.pmt.actor->mailbox;
-    struct Actor *actor = task->task.pmt.actor;
+    mailbox *mail = task->task.pmt.actor->mailbox;
+    actor *actor = task->task.pmt.actor;
     zval *return_value = malloc(sizeof(zval));
 
     actor->mailbox = actor->mailbox->next_message;
@@ -148,7 +172,7 @@ void process_message(struct Task *task)
     dequeue_task(task);
 }
 
-void send_message(struct Task *task)
+void send_message(task *task)
 {
     if (task->task.smt.to_actor == NULL) {
         send_remote_message(task);
@@ -159,11 +183,11 @@ void send_message(struct Task *task)
     dequeue_task(task);
 }
 
-void send_local_message(struct Task *task)
+void send_local_message(task *task)
 {
-    struct Actor *actor = task->task.smt.to_actor;
-    struct Mailbox *previous_message = actor->mailbox;
-    struct Mailbox *current_message = actor->mailbox;
+    actor *actor = task->task.smt.to_actor;
+    mailbox *previous_message = actor->mailbox;
+    mailbox *current_message = actor->mailbox;
 
     if (previous_message == NULL) {
         actor->mailbox = task->task.smt.message;
@@ -179,7 +203,7 @@ void send_local_message(struct Task *task)
     enqueue_task(create_process_message_task(actor));
 }
 
-void send_remote_message(struct Task *task)
+void send_remote_message(task *task)
 {
     // @todo debugging purposes only - no implementation yet
     printf("Tried to send a message to a non-existent (or remote) actor\n");
@@ -190,9 +214,9 @@ void initialise_actor_system()
 {
     // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable (also gives logical, not physical core count - good/bad?)
 
-    tasks.task = NULL;
+    PHACTOR_ZG(tasks).task = NULL;
 
-    pthread_create(&scheduler_thread, NULL, scheduler_startup, NULL);
+    pthread_create(&scheduler_thread.thread, NULL, scheduler_startup, NULL);
 }
 
 /* {{{ zend_call_method
@@ -263,9 +287,9 @@ zend_string *spl_zval_object_hash(zval *zval_obj)
     return spl_object_hash(Z_OBJ_P(zval_obj));
 }
 
-struct Actor *get_actor_from_object(zend_object *actor_obj)
+actor *get_actor_from_object(zend_object *actor_obj)
 {
-    struct Actor *current_actor = actor_system.actors;
+    actor *current_actor = PHACTOR_ZG(actor_system).actors;
 
     if (current_actor == NULL) {
         printf("Trying to get actor hash from no actors\n"); // @debug debugging only for now (remove later and invert condition)
@@ -299,14 +323,14 @@ struct Actor *get_actor_from_object(zend_object *actor_obj)
     // return current_actor;
 }
 
-struct Actor *get_actor_from_zval(zval *actor_zval_obj)
+actor *get_actor_from_zval(zval *actor_zval_obj)
 {
     return get_actor_from_object(Z_OBJ_P(actor_zval_obj));
 }
 
 zend_object* phactor_actor_ctor(zend_class_entry *entry)
 {
-    struct Actor *new_actor = ecalloc(1, sizeof(struct Actor));// + zend_object_properties_size(entry));
+    actor *new_actor = ecalloc(1, sizeof(actor));// + zend_object_properties_size(entry));
 
     // @todo create the UUID on actor creation - this is needed for remote actors only
     // new_actor->actor_ref = spl_zval_object_hash(actor_zval);
@@ -324,9 +348,9 @@ zend_object* phactor_actor_ctor(zend_class_entry *entry)
 }
 
 // no longer needed?
-// struct Actor *create_new_actor(zend_class_entry *entry)
+// actor *create_new_actor(zend_class_entry *entry)
 // {
-//     struct Actor *new_actor = malloc(sizeof(struct Actor));
+//     actor *new_actor = malloc(sizeof(actor));
 //     // new_actor->actor = malloc(sizeof(zval));
 //
 //     ZVAL_COPY(new_actor->actor, actor_zval);
@@ -337,13 +361,13 @@ zend_object* phactor_actor_ctor(zend_class_entry *entry)
 //     return new_actor;
 // }
 
-void add_new_actor(struct Actor *new_actor)
+void add_new_actor(actor *new_actor)
 {
-    struct Actor *previous_actor = actor_system.actors;
-    struct Actor *current_actor = actor_system.actors;
+    actor *previous_actor = PHACTOR_ZG(actor_system).actors;
+    actor *current_actor = PHACTOR_ZG(actor_system).actors;
 
     if (previous_actor == NULL) {
-        actor_system.actors = new_actor;
+        PHACTOR_ZG(actor_system).actors = new_actor;
         return;
     }
 
@@ -355,10 +379,10 @@ void add_new_actor(struct Actor *new_actor)
     previous_actor->next = new_actor;
 }
 
-struct Task *create_send_message_task(zval *actor_zval, zval *message)
+task *create_send_message_task(zval *actor_zval, zval *message)
 {
-    struct Actor *actor = get_actor_from_zval(actor_zval);
-    struct Task *new_task = malloc(sizeof(struct Task));
+    actor *actor = get_actor_from_zval(actor_zval);
+    task *new_task = malloc(sizeof(task));
 
     if (actor == NULL) {
         // debugging purposes only
@@ -375,9 +399,9 @@ struct Task *create_send_message_task(zval *actor_zval, zval *message)
     return new_task;
 }
 
-struct Task *create_process_message_task(struct Actor *actor)
+task *create_process_message_task(actor *actor)
 {
-    struct Task *new_task = malloc(sizeof(struct Task));
+    task *new_task = malloc(sizeof(task));
 
     new_task->task.pmt.actor = actor;
     new_task->task_type = PROCESS_MESSAGE_TASK;
@@ -386,13 +410,13 @@ struct Task *create_process_message_task(struct Actor *actor)
     return new_task;
 }
 
-void enqueue_task(struct Task *new_task)
+void enqueue_task(task *new_task)
 {
-    struct Task *previous_task = tasks.task;
-    struct Task *current_task = tasks.task;
+    task *previous_task = PHACTOR_ZG(tasks).task;
+    task *current_task = PHACTOR_ZG(tasks).task;
 
     if (previous_task == NULL) {
-        tasks.task = new_task;
+        PHACTOR_ZG(tasks).task = new_task;
         return;
     }
 
@@ -404,13 +428,13 @@ void enqueue_task(struct Task *new_task)
     previous_task->next_task = new_task;
 }
 
-void dequeue_task(struct Task *task)
+void dequeue_task(struct _task *task)
 {
-    struct Task *previous_task = tasks.task;
-    struct Task *current_task = tasks.task;
+    struct _task *previous_task = PHACTOR_ZG(tasks).task;
+    struct _task *current_task = PHACTOR_ZG(tasks).task;
 
     if (previous_task == task) {
-        tasks.task = tasks.task->next_task;
+        PHACTOR_ZG(tasks).task = PHACTOR_ZG(tasks).task->next_task;
         free(task);
         return;
     }
@@ -425,9 +449,9 @@ void dequeue_task(struct Task *task)
     free(task);
 }
 
-struct Mailbox *create_new_message(zval *message)
+mailbox *create_new_message(zval *message)
 {
-    struct Mailbox *new_message = malloc(sizeof(struct Mailbox));
+    mailbox *new_message = malloc(sizeof(mailbox));
     new_message->message = malloc(sizeof(zval));
     ZVAL_COPY(new_message->message, message);
     new_message->next_message = NULL;
@@ -440,7 +464,7 @@ struct Mailbox *create_new_message(zval *message)
 //     add_new_actor(actor);
 // }
 
-void remove_actor(struct Actor *target_actor)
+void remove_actor(actor *target_actor)
 {
         if (target_actor == NULL) {
             // debugging purposes only
@@ -448,10 +472,10 @@ void remove_actor(struct Actor *target_actor)
             return;
         }
 
-        struct Actor *current_actor = actor_system.actors;
+        actor *current_actor = PHACTOR_ZG(actor_system).actors;
 
         if (current_actor == target_actor) {
-            actor_system.actors = current_actor->next;
+            PHACTOR_ZG(actor_system).actors = current_actor->next;
             // zval_ptr_dtor(target_actor->actor);
             // free(target_actor->actor);
             // zend_string_free(target_actor->actor_ref);
@@ -480,7 +504,7 @@ void remove_actor_object(zval *actor)
 
 void php_actor_free_object(zend_object *obj)
 {
-    struct Actor *target_actor = get_actor_from_object(obj);
+    actor *target_actor = get_actor_from_object(obj);
 
     if (target_actor == NULL) {
         // debugging purposes only
@@ -501,16 +525,16 @@ zval *receive_block(zval *actor)
 
 void force_shutdown_actor_system()
 {
-    php_shutdown = 1;
+    PHACTOR_ZG(php_shutdown) = 1;
 }
 
 void scheduler_blocking()
 {
-    if (daemonise_actor_system == 0) {
-        php_shutdown = 1;
+    if (PHACTOR_ZG(daemonise_actor_system) == 0) {
+        PHACTOR_ZG(php_shutdown) = 1;
     }
 
-    pthread_join(scheduler_thread, NULL);
+    pthread_join(scheduler_thread.thread, NULL);
 }
 
 
@@ -546,7 +570,7 @@ ZEND_END_ARG_INFO()
 /* {{{ proto string ActorSystem::__construct() */
 PHP_METHOD(ActorSystem, __construct)
 {
-	if (zend_parse_parameters(ZEND_NUM_ARGS(), "|b", &daemonise_actor_system) != SUCCESS) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "|b", &PHACTOR_ZG(daemonise_actor_system)) != SUCCESS) {
 		return;
 	}
 
@@ -674,14 +698,23 @@ void php_phactor_init(void)
     initialise_actor_class();
 }
 
-// void phactor_globals_ctor(zend_phactor_globals *phactor_globals)
-// {
-//     phactor_globals.task_queue_mutex = malloc(sizeof(pthread_mutex_t));
-//     phactor_globals.actor_list_mutex = malloc(sizeof(pthread_mutex_t));
-//
-//     pthread_mutex_init(phactor_globals.task_queue_mutex, NULL);
-//     pthread_mutex_init(phactor_globals.actor_list_mutex, NULL);
-// }
+void phactor_globals_ctor(zend_phactor_globals *phactor_globals)
+{
+    phactor_globals->php_shutdown = 0;
+    phactor_globals->daemonise_actor_system = 0;
+    phactor_globals->thread_count = sysconf(_SC_NPROCESSORS_ONLN);
+
+    pthread_mutex_init(&phactor_mutex, NULL);
+    pthread_mutex_init(&phactor_globals->task_queue_mutex, NULL);
+    pthread_mutex_init(&phactor_globals->actor_list_mutex, NULL);
+}
+
+void phactor_globals_dtor(zend_phactor_globals *phactor_globals)
+{
+    pthread_mutex_destroy(&phactor_mutex);
+    pthread_mutex_destroy(&phactor_globals->task_queue_mutex);
+    pthread_mutex_destroy(&phactor_globals->actor_list_mutex);
+}
 
 
 
@@ -690,7 +723,10 @@ PHP_MINIT_FUNCTION(phactor)
 {
     php_phactor_init();
 
-    // ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
+    ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
+
+    TSRMLS_CACHE_UPDATE();
+    phactor_instance = TSRMLS_CACHE;
 
 	return SUCCESS;
 }
@@ -706,7 +742,7 @@ PHP_MSHUTDOWN_FUNCTION(phactor)
 /* {{{ PHP_RINIT_FUNCTION */
 PHP_RINIT_FUNCTION(phactor)
 {
-#if defined(COMPILE_DL_PHACTOR) && defined(ZTS)
+#if defined(COMPILE_DL_PHACTOR)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
 	return SUCCESS;

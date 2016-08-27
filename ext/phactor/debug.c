@@ -23,14 +23,12 @@
 #endif
 
 #include "php.h"
-// #include "php_ini.h"
-// #include "ext/standard/info.h"
 #include "php_phactor_debug.h"
 #include "php_phactor.h"
 
-void debug_tasks(struct TaskQueue tasks)
+void debug_tasks(task_queue tasks)
 {
-    struct Task *task = tasks.task;
+    task *task = PHACTOR_ZG(tasks).task;
     int task_count = 0;
 
     printf("Debugging tasks:\n");
@@ -54,9 +52,9 @@ void debug_tasks(struct TaskQueue tasks)
     printf("\n");
 }
 
-void debug_actor_system(struct ActorSystem actor_system)
+void debug_actor_system(struct _actor_system actor_system)
 {
-    struct Actor *current_actor = actor_system.actors;
+    actor *current_actor = PHACTOR_ZG(actor_system).actors;
     int actor_count = 0;
 
     printf("Debugging actors:\n");

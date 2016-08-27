@@ -23,7 +23,7 @@
 
 #include "php_phactor.h"
 
-void debug_tasks(struct TaskQueue tasks);
-void debug_actor_system(struct ActorSystem actor_system);
+void debug_tasks(task_queue tasks);
+void debug_actor_system(struct _actor_system actor_system);
 
 #endif	/* PHP_PHACTOR_DEBUG_H */
