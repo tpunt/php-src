@@ -36,6 +36,8 @@
 #include <unistd.h>
 #include <assert.h>
 
+#include "prepare.h"
+
 ZEND_DECLARE_MODULE_GLOBALS(phactor)
 
 #if COMPILE_DL_PTHREADS
@@ -43,39 +45,36 @@ ZEND_DECLARE_MODULE_GLOBALS(phactor)
 	ZEND_GET_MODULE(pthreads)
 #endif
 
-/*
-Get the scheduler to spin up X threads ?? Scheduler must be aware of the threads, but convolutes its responsibility
-Recreate the execution contexts in each thread
-
-*/
-
+thread main_thread;
 thread scheduler_thread;
 pthread_mutex_t phactor_mutex;
+dtor_func_t (default_resource_dtor);
 zend_object_handlers phactor_actor_handlers;
 zend_object_handlers phactor_actor_system_handlers;
 void ***phactor_instance = NULL;
+
+zend_class_entry *ActorSystem_ce;
+zend_class_entry *Actor_ce;
 
 void *worker_function(thread *phactor_thread)
 {
     phactor_thread->id = (ulong) pthread_self();
     phactor_thread->ls = ts_resource(0);
+    // phactor_thread->thread = tsrm_thread_id();
+
     TSRMLS_CACHE_UPDATE();
 
     pthread_mutex_lock(&phactor_mutex);
     task *current_task = PHACTOR_ZG(tasks).task;
 
-#define PTHREADS_FETCH_CTX(ls, id, type, element) (((type) (*((void ***) ls))[TSRM_UNSHUFFLE_RSRC_ID(id)])->element)
-#define PTHREADS_SG(ls, v) PTHREADS_FETCH_CTX(ls, sapi_globals_id, sapi_globals_struct*, v)
-#define PTHREADS_PG(ls, v) PTHREADS_FETCH_CTX(ls, core_globals_id, php_core_globals*, v)
-
-    // SG(server_context) = PTHREADS_SG(phactor_thread->)
+    SG(server_context) = PHACTOR_SG(main_thread.ls, server_context);
 
     PG(expose_php) = 0;
 	PG(auto_globals_jit) = 0;
 
 	php_request_startup();
 
-    // prepare different environment parts
+    initialise_worker_thread_environments(phactor_thread);
 
     pthread_mutex_unlock(&phactor_mutex);
 
@@ -113,9 +112,22 @@ void *worker_function(thread *phactor_thread)
     return NULL;
 }
 
-void initialise_worker_thread_environments()
+void initialise_worker_thread_environments(thread *phactor_thread)
 {
-    //
+    // taken from pthreads...
+	pthreads_prepare_sapi(phactor_thread);
+
+	pthreads_prepare_ini(phactor_thread);
+
+	pthreads_prepare_constants(phactor_thread);
+
+	pthreads_prepare_functions(phactor_thread);
+
+	pthreads_prepare_classes(phactor_thread);
+
+	pthreads_prepare_includes(phactor_thread);
+
+	pthreads_prepare_exception_handler(phactor_thread);
 }
 
 void *scheduler_startup()
@@ -129,8 +141,6 @@ void *scheduler_startup()
     for (int i = 0; i < PHACTOR_ZG(thread_count); i += sizeof(thread)) {
         pthread_create(&PHACTOR_ZG(worker_threads)[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &PHACTOR_ZG(worker_threads)[i]);
     }
-
-    initialise_worker_thread_environments();
 
     return NULL;
 }
@@ -215,6 +225,10 @@ void initialise_actor_system()
     // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable (also gives logical, not physical core count - good/bad?)
 
     PHACTOR_ZG(tasks).task = NULL;
+
+    main_thread.id = (ulong) pthread_self();
+    main_thread.ls = ts_resource(0);
+    // main_thread.thread = tsrm_thread_id();
 
     pthread_create(&scheduler_thread.thread, NULL, scheduler_startup, NULL);
 }
@@ -700,6 +714,7 @@ void php_phactor_init(void)
 
 void phactor_globals_ctor(zend_phactor_globals *phactor_globals)
 {
+    phactor_globals->tasks.task = NULL;
     phactor_globals->php_shutdown = 0;
     phactor_globals->daemonise_actor_system = 0;
     phactor_globals->thread_count = sysconf(_SC_NPROCESSORS_ONLN);
@@ -723,6 +738,9 @@ PHP_MINIT_FUNCTION(phactor)
 {
     php_phactor_init();
 
+    // main_thread.id = (ulong) pthread_self();
+    // main_thread.ls = ts_resource(0);
+
     ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
 
     TSRMLS_CACHE_UPDATE();
@@ -742,9 +760,9 @@ PHP_MSHUTDOWN_FUNCTION(phactor)
 /* {{{ PHP_RINIT_FUNCTION */
 PHP_RINIT_FUNCTION(phactor)
 {
-#if defined(COMPILE_DL_PHACTOR)
 	ZEND_TSRMLS_CACHE_UPDATE();
-#endif
+
+    zend_hash_init(&PHACTOR_ZG(resolve), 15, NULL, NULL, 0);
 	return SUCCESS;
 }
 /* }}} */
@@ -752,6 +770,8 @@ PHP_RINIT_FUNCTION(phactor)
 /* {{{ PHP_RSHUTDOWN_FUNCTION */
 PHP_RSHUTDOWN_FUNCTION(phactor)
 {
+    zend_hash_destroy(&PHACTOR_ZG(resolve));
+
 	return SUCCESS;
 }
 /* }}} */
@@ -774,8 +794,8 @@ zend_module_entry phactor_module_entry = {
 	// PHP_MSHUTDOWN(phactor),
     NULL,
 	PHP_RINIT(phactor),
-	// PHP_RSHUTDOWN(phactor),
-    NULL,
+	PHP_RSHUTDOWN(phactor),
+    // NULL,
 	PHP_MINFO(phactor),
 	PHP_PHACTOR_VERSION,
 	STANDARD_MODULE_PROPERTIES
