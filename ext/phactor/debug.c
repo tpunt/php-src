@@ -28,7 +28,7 @@
 
 void debug_tasks(task_queue tasks)
 {
-    task *task = PHACTOR_ZG(tasks).task;
+    task *task = tasks.task;
     int task_count = 0;
 
     printf("Debugging tasks:\n");
@@ -54,7 +54,7 @@ void debug_tasks(task_queue tasks)
 
 void debug_actor_system(struct _actor_system actor_system)
 {
-    actor *current_actor = PHACTOR_ZG(actor_system).actors;
+    actor *current_actor = actor_system.actors;
     int actor_count = 0;
 
     printf("Debugging actors:\n");

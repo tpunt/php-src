@@ -109,6 +109,7 @@ typedef struct _actor {
 } actor;
 
 struct _actor_system {
+    zend_object actor_system;
     // char system_reference[10]; // @todo needed when remote actors are introduced
     actor *actors;
 };
@@ -157,7 +158,8 @@ ZEND_BEGIN_MODULE_GLOBALS(phactor)
     int php_shutdown;
     zend_bool daemonise_actor_system;
     struct _actor_system actor_system;
-    task_queue tasks;
+    task_queue tasks; // should this really be a ZGLOB? Does this mean each thread will have its own set of tasks?
+    zval this; //
     int thread_count;
     HashTable *resources; // used in store.c::pthreads_resources_keep
     HashTable resolve; // used in prepare.c::pthreads_copy_entry

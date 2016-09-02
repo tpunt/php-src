@@ -646,47 +646,6 @@ void pthreads_prepare_parent(thread *thread) {
 // } /* }}} */
 // #endif
 
-// /* {{{ */
-// int pthreads_prepared_startup(thread* thread, pthreads_monitor_t *ready) {
-//
-// 	PTHREADS_PREPARATION_BEGIN_CRITICAL() {
-// 		thread->id = pthreads_self();
-// 		thread->ls = ts_resource(0);
-//
-// 		TSRMLS_CACHE_UPDATE();
-//
-// 		SG(server_context) =
-// 			PTHREADS_SG(main_thread.ls, server_context);
-//
-// 		PG(expose_php) = 0;
-// 		PG(auto_globals_jit) = 0;
-//
-// 		php_request_startup();
-//
-// #if PHP_VERSION_ID >= 70100
-// 		pthreads_prepare_compiler(thread);
-// #endif
-//
-// 		pthreads_prepare_sapi(thread);
-//
-// 		pthreads_prepare_ini(thread);
-//
-// 		pthreads_prepare_constants(thread);
-//
-// 		pthreads_prepare_functions(thread);
-//
-// 		pthreads_prepare_classes(thread);
-//
-// 		pthreads_prepare_includes(thread);
-//
-// 		pthreads_prepare_exception_handler(thread);
-// 		pthreads_prepare_resource_destructor(thread);
-// 		pthreads_monitor_add(ready, PTHREADS_MONITOR_READY);
-// 	} PTHREADS_PREPARATION_END_CRITICAL();
-//
-// 	return SUCCESS;
-// } /* }}} */
-
 /* {{{ */
 static inline int pthreads_resources_cleanup(zval *bucket) {
 	if (pthreads_resources_kept(Z_RES_P(bucket))) {

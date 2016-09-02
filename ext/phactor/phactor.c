@@ -130,20 +130,20 @@ void initialise_worker_thread_environments(thread *phactor_thread)
 	pthreads_prepare_exception_handler(phactor_thread);
 }
 
-void *scheduler_startup()
-{
-    scheduler_thread.id = (ulong) pthread_self();
-    scheduler_thread.ls = ts_resource(0);
-    TSRMLS_CACHE_UPDATE();
-
-    PHACTOR_ZG(worker_threads) = malloc(sizeof(thread) * PHACTOR_ZG(thread_count));
-
-    for (int i = 0; i < PHACTOR_ZG(thread_count); i += sizeof(thread)) {
-        pthread_create(&PHACTOR_ZG(worker_threads)[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &PHACTOR_ZG(worker_threads)[i]);
-    }
-
-    return NULL;
-}
+// void *scheduler_startup()
+// {
+//     scheduler_thread.id = (ulong) pthread_self();
+//     scheduler_thread.ls = ts_resource(0);
+//     TSRMLS_CACHE_UPDATE();
+//
+//     PHACTOR_ZG(worker_threads) = malloc(sizeof(thread) * PHACTOR_ZG(thread_count));
+//
+//     for (int i = 0; i < PHACTOR_ZG(thread_count); i += sizeof(thread)) {
+//         pthread_create(&PHACTOR_ZG(worker_threads)[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &PHACTOR_ZG(worker_threads)[i]);
+//     }
+//
+//     return NULL;
+// }
 
 void process_message(task *task)
 {
@@ -222,15 +222,30 @@ void send_remote_message(task *task)
 
 void initialise_actor_system()
 {
-    // int core_count = sysconf(_SC_NPROCESSORS_ONLN); // not portable (also gives logical, not physical core count - good/bad?)
-
     PHACTOR_ZG(tasks).task = NULL;
 
     main_thread.id = (ulong) pthread_self();
-    main_thread.ls = ts_resource(0);
+    main_thread.ls = TSRMLS_CACHE;
     // main_thread.thread = tsrm_thread_id();
 
-    pthread_create(&scheduler_thread.thread, NULL, scheduler_startup, NULL);
+    if (Z_TYPE(EG(user_exception_handler)) != IS_UNDEF) {
+        if (Z_TYPE_P(&EG(user_exception_handler)) == IS_OBJECT) {
+    		rebuild_object_properties(Z_OBJ_P(&EG(user_exception_handler)));
+    	} else if (Z_TYPE_P(&EG(user_exception_handler)) == IS_ARRAY) {
+    		zval *object = zend_hash_index_find(Z_ARRVAL_P(&EG(user_exception_handler)), 0);
+    		if (object && Z_TYPE_P(object) == IS_OBJECT) {
+    			rebuild_object_properties(Z_OBJ_P(object));
+    		}
+    	}
+    }
+
+    PHACTOR_ZG(worker_threads) = malloc(sizeof(thread) * PHACTOR_ZG(thread_count));
+
+    for (int i = 0; i < PHACTOR_ZG(thread_count); i += sizeof(thread)) {
+        pthread_create(&PHACTOR_ZG(worker_threads)[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &PHACTOR_ZG(worker_threads)[i]);
+    }
+
+    // pthread_create(&scheduler_thread.thread, NULL, scheduler_startup, NULL);
 }
 
 /* {{{ zend_call_method
@@ -359,6 +374,20 @@ zend_object* phactor_actor_ctor(zend_class_entry *entry)
     add_new_actor(new_actor);
 
 	return &new_actor->actor;
+}
+
+zend_object* phactor_actor_system_ctor(zend_class_entry *entry)
+{
+    struct _actor_system *new_actor_system = ecalloc(1, sizeof(struct _actor_system));// + zend_object_properties_size(entry));
+
+    // @todo create the UUID on actor creation - this is needed for remote actor systems only
+
+    zend_object_std_init(&new_actor_system->actor_system, entry);
+	// object_properties_init(&new_actor->actor, entry);
+
+    new_actor_system->actor_system.handlers = &phactor_actor_system_handlers;
+
+	return &new_actor_system->actor_system;
 }
 
 // no longer needed?
@@ -537,6 +566,7 @@ zval *receive_block(zval *actor)
     return actor; // shutup
 }
 
+// force shut down the actor system (used for daemonised actor systems)
 void force_shutdown_actor_system()
 {
     PHACTOR_ZG(php_shutdown) = 1;
@@ -548,7 +578,21 @@ void scheduler_blocking()
         PHACTOR_ZG(php_shutdown) = 1;
     }
 
-    pthread_join(scheduler_thread.thread, NULL);
+    while (1) {
+        if (PHACTOR_ZG(php_shutdown) == 1) {
+            break;
+        }
+    }
+
+    // pthread_join(scheduler_thread.thread, NULL);
+
+    // printf("scheduler thread finished\n");
+
+    for (int i = 0; i < PHACTOR_ZG(thread_count); i += sizeof(thread)) {
+        pthread_join(PHACTOR_ZG(worker_threads)[i].thread, NULL);
+    }
+
+    // ts_free_thread(); // we need to free scheduler thread, not this (main) thread
 }
 
 
@@ -626,6 +670,8 @@ PHP_METHOD(Actor, send)
 	}
 
     enqueue_task(create_send_message_task(actor_zval, message));
+
+    debug_tasks(PHACTOR_ZG(tasks));
 }
 /* }}} */
 
@@ -679,19 +725,35 @@ void initialise_actor_system_class(void)
 
 	INIT_CLASS_ENTRY(ce, "ActorSystem", ActorSystem_methods);
 	ActorSystem_ce = zend_register_internal_class(&ce);
-	ActorSystem_ce->ce_flags |= ZEND_ACC_ABSTRACT;
+    // ActorSystem_ce->create_object = phactor_actor_system_ctor;
 
 	zh = zend_get_std_object_handlers();
 
 	memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
-
-	phactor_actor_system_handlers.get_properties = NULL;
 }
+
+// typedef void (*zend_execute_ex_function)(zend_execute_data *);
+// zend_execute_ex_function zend_execute_ex_hook = NULL;
+//
+// void pthreads_execute_ex(zend_execute_data *data) {
+//     if (zend_execute_ex_hook) {
+// 		zend_execute_ex_hook(data);
+// 	} else execute_ex(data);
+//
+// 	if (Z_TYPE(PHACTOR_ZG(this)) != IS_UNDEF) {
+// 		if (EG(exception) &&
+// 			(!EG(current_execute_data) || !EG(current_execute_data)->prev_execute_data))
+// 			zend_try_exception_handler();
+// 	}
+// }
 
 void initialise_actor_class(void)
 {
     zend_class_entry ce;
 	zend_object_handlers *zh;
+
+    // zend_execute_ex_hook = zend_execute_ex;
+	// zend_execute_ex = pthreads_execute_ex;
 
 	INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);
 	Actor_ce = zend_register_internal_class(&ce);
@@ -702,7 +764,6 @@ void initialise_actor_class(void)
 
 	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
 
-	phactor_actor_handlers.get_properties = NULL;
     // phactor_actor_handlers.dtor_obj = php_actor_free_object;
 }
 
@@ -717,8 +778,18 @@ void phactor_globals_ctor(zend_phactor_globals *phactor_globals)
     phactor_globals->tasks.task = NULL;
     phactor_globals->php_shutdown = 0;
     phactor_globals->daemonise_actor_system = 0;
-    phactor_globals->thread_count = sysconf(_SC_NPROCESSORS_ONLN);
+    phactor_globals->thread_count = sysconf(_SC_NPROCESSORS_ONLN); // @todo why is this a ZGLOB?
 
+//     pthread_mutexattr_t at;
+// 	pthread_mutexattr_init(&at);
+//
+// #if defined(PTHREAD_MUTEX_RECURSIVE) || defined(__FreeBSD__)
+// 	pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE);
+// #else
+// 	pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE_NP);
+// #endif
+//
+//     pthread_mutex_init(&phactor_mutex, &at);
     pthread_mutex_init(&phactor_mutex, NULL);
     pthread_mutex_init(&phactor_globals->task_queue_mutex, NULL);
     pthread_mutex_init(&phactor_globals->actor_list_mutex, NULL);
@@ -737,9 +808,6 @@ void phactor_globals_dtor(zend_phactor_globals *phactor_globals)
 PHP_MINIT_FUNCTION(phactor)
 {
     php_phactor_init();
-
-    // main_thread.id = (ulong) pthread_self();
-    // main_thread.ls = ts_resource(0);
 
     ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
 
@@ -763,6 +831,13 @@ PHP_RINIT_FUNCTION(phactor)
 	ZEND_TSRMLS_CACHE_UPDATE();
 
     zend_hash_init(&PHACTOR_ZG(resolve), 15, NULL, NULL, 0);
+
+    if (phactor_instance != TSRMLS_CACHE) {
+		if (memcmp(sapi_module.name, ZEND_STRL("cli")) == SUCCESS) {
+			sapi_module.deactivate = NULL;
+		}
+	}
+
 	return SUCCESS;
 }
 /* }}} */
