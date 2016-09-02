@@ -22,9 +22,6 @@
 #include "copy.h"
 #include "php_phactor.h"
 
-#define PTHREADS_PREPARATION_BEGIN_CRITICAL() pthread_mutex_lock(&PHACTOR_G(phactor_mutex));
-#define PTHREADS_PREPARATION_END_CRITICAL()   pthread_mutex_unlock(&PHACTOR_G(phactor_mutex));
-
 /* {{{ */
 static zend_trait_alias * pthreads_preparation_copy_trait_alias(thread* thread, zend_trait_alias *alias);
 static zend_trait_precedence * pthreads_preparation_copy_trait_precedence(thread* thread, zend_trait_precedence *precedence);
@@ -601,9 +598,9 @@ inline void pthreads_prepare_exception_handler(thread* thread) {
 } /* }}} */
 
 /* {{{ */
-static inline void pthreads_prepare_resource_destructor(thread* thread) {
-	if (!PHACTOR_G(default_resource_dtor))
-		PHACTOR_G(default_resource_dtor)=(EG(regular_list).pDestructor);
+inline void pthreads_prepare_resource_destructor(thread* thread) {
+	if (!default_resource_dtor)
+		default_resource_dtor=(EG(regular_list).pDestructor);
 	EG(regular_list).pDestructor =  (dtor_func_t) pthreads_prepared_resource_dtor;
 } /* }}} */
 
@@ -655,15 +652,17 @@ static inline int pthreads_resources_cleanup(zval *bucket) {
 
 /* {{{ */
 int pthreads_prepared_shutdown(thread* thread) {
-	PTHREADS_PREPARATION_BEGIN_CRITICAL() {
-		zend_hash_apply(&EG(regular_list), pthreads_resources_cleanup);
+    // pthread_mutex_lock(&PHACTOR_G(phactor_mutex)); // @todo still needed?
 
-		PG(report_memleaks) = 0;
+	zend_hash_apply(&EG(regular_list), pthreads_resources_cleanup);
 
-		php_request_shutdown((void*)NULL);
+	PG(report_memleaks) = 0;
 
-		ts_free_thread();
-	} PTHREADS_PREPARATION_END_CRITICAL();
+	php_request_shutdown((void*)NULL);
+
+	ts_free_thread();
+
+	// pthread_mutex_unlock(&PHACTOR_G(phactor_mutex)); // @todo still needed?
 
 	return SUCCESS;
 } /* }}} */
@@ -714,12 +713,12 @@ static  zend_trait_method_reference * pthreads_preparation_copy_trait_method_ref
 	return copy;
 } /* }}} */
 
-/* {{{ */
+// /* {{{ */
 static void pthreads_prepared_resource_dtor(zval *zv) {
 	zend_try {
 		if (!pthreads_resources_kept(Z_RES_P(zv))){
-			if (PHACTOR_G(default_resource_dtor))
-				PHACTOR_G(default_resource_dtor)(zv);
+			if (default_resource_dtor)
+				default_resource_dtor(zv);
 		} else if (PHACTOR_ZG(resources)) {
 
                 }

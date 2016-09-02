@@ -147,7 +147,7 @@ typedef struct _thread {
 
 extern thread main_thread;
 extern thread scheduler_thread;
-extern pthread_mutex_t phactor_mutex;
+extern pthread_mutex_t phactor_task_mutex;
 extern dtor_func_t (default_resource_dtor);
 extern zend_object_handlers phactor_actor_handlers;
 extern zend_object_handlers phactor_actor_system_handlers;
@@ -157,10 +157,7 @@ ZEND_EXTERN_MODULE_GLOBALS(phactor)
 ZEND_BEGIN_MODULE_GLOBALS(phactor)
     int php_shutdown;
     zend_bool daemonise_actor_system;
-    struct _actor_system actor_system;
-    task_queue tasks; // should this really be a ZGLOB? Does this mean each thread will have its own set of tasks?
     zval this; //
-    int thread_count;
     HashTable *resources; // used in store.c::pthreads_resources_keep
     HashTable resolve; // used in prepare.c::pthreads_copy_entry
     thread *worker_threads; // create own struct instead

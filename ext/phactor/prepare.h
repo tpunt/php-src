@@ -27,6 +27,7 @@ void pthreads_prepare_functions(thread* thread);
 void pthreads_prepare_constants(thread *thread);
 void pthreads_prepare_ini(thread *thread);
 void pthreads_prepare_sapi(thread *thread);
+void pthreads_prepare_resource_destructor(thread* thread);
 
 /* {{{ fetch prepared class entry */
 zend_class_entry* pthreads_prepared_entry(thread* thread, zend_class_entry *candidate); /* }}} */
