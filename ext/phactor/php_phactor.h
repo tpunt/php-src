@@ -174,7 +174,7 @@ void enqueue_task(task *task);
 void dequeue_task(task *task);
 zend_string *spl_object_hash(zend_object *obj);
 zend_string *spl_zval_object_hash(zval *zval_obj);
-zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, int param_count, zval* arg1);
+zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval* arg1);
 actor *get_actor_from_hash(zend_string *actor_object_ref);
 actor *get_actor_from_object(zend_object *actor_obj);
 actor *get_actor_from_zval(zval *actor_zval_obj);

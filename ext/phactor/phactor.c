@@ -159,7 +159,8 @@ void process_message(task *task)
 {
     mailbox *mail = task->task.pmt.actor->mailbox;
     actor *actor = task->task.pmt.actor;
-    zval *return_value = malloc(sizeof(zval));
+    // zval *return_value = malloc(sizeof(zval));
+    zval return_value;
 
     actor->mailbox = actor->mailbox->next_message;
 
@@ -183,12 +184,12 @@ void process_message(task *task)
 	// 	}
 	// }
 
-    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, 1, mail->message);
+    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, &return_value, mail->message);
 
     zval_ptr_dtor(mail->message);
     free(mail->message);
     free(mail);
-    free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
+    // free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
     dequeue_task(task);
 }
 
@@ -261,38 +262,46 @@ void initialise_actor_system()
 
 /* {{{ zend_call_method
  Only returns the returned zval if retval_ptr != NULL */
-zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, int param_count, zval* arg1)
+zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval* arg1)
 {
     int result;
     zend_fcall_info fci;
-    zval retval;
+    zend_fcall_info_cache fcc;
     zend_class_entry *obj_ce;
+    zend_function *receive_function;
+    zend_string *receive_function_name;
     zval params[1];
 
     ZVAL_COPY_VALUE(&params[0], arg1);
 
+    // zend_string *zstr = malloc(_ZSTR_STRUCT_SIZE(function_name_len));
+    // GC_REFCOUNT(zstr) = 1;
+    // GC_TYPE_INFO(zstr) = IS_STRING;
+    // zend_string_forget_hash_val(zstr);
+    // ZSTR_LEN(zstr) = function_name_len;
+    // memcpy(ZSTR_VAL(zstr), function_name, function_name_len);
+    // ZSTR_VAL(zstr)[function_name_len] = '\0';
+    // ZVAL_NEW_STR(&fci.function_name, zstr);
+
     fci.size = sizeof(fci);
     fci.object = &object;
-
-    zend_string *zstr = malloc(_ZSTR_STRUCT_SIZE(function_name_len));
-    GC_REFCOUNT(zstr) = 1;
-    GC_TYPE_INFO(zstr) = IS_STRING;
-    zend_string_forget_hash_val(zstr);
-    ZSTR_LEN(zstr) = function_name_len;
-    memcpy(ZSTR_VAL(zstr), function_name, function_name_len);
-    ZSTR_VAL(zstr)[function_name_len] = '\0';
-
-    ZVAL_NEW_STR(&fci.function_name, zstr);
-
-    fci.retval = retval_ptr ? retval_ptr : &retval;
-    fci.param_count = param_count;
+    fci.retval = retval_ptr;
+    fci.param_count = 1;
     fci.params = params;
     fci.no_separation = 1;
 
-    /* no interest in caching and no information already present that is
-     * needed later inside zend_call_function. */
-    result = zend_call_function(&fci, NULL);
-    zval_ptr_dtor(&fci.function_name);
+    receive_function_name = zend_string_init(ZEND_STRL("receive"), 1);
+	GC_REFCOUNT(receive_function_name)++;
+    receive_function = zend_hash_find_ptr(&object.ce->function_table, receive_function_name);
+
+    fcc.initialized = 1;
+	fcc.object = &object;
+	fcc.calling_scope = object.ce;
+	fcc.called_scope = object.ce;
+	fcc.function_handler = receive_function;
+
+    result = zend_call_function(&fci, &fcc);
+    // zval_ptr_dtor(&fci.function_name);
 
     if (result == FAILURE) {
         /* error at c-level */
@@ -302,14 +311,12 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
             zend_error_noreturn(E_CORE_ERROR, "Couldn't execute method %s%s%s", obj_ce ? ZSTR_VAL(obj_ce->name) : "", obj_ce ? "::" : "", function_name);
         }
     }
+
     /* copy arguments back, they might be changed by references */
     if (Z_ISREF(params[0]) && !Z_ISREF_P(arg1)) {
         ZVAL_COPY_VALUE(arg1, &params[0]);
     }
-    if (!retval_ptr) {
-        zval_ptr_dtor(&retval);
-        return NULL;
-    }
+
     return retval_ptr;
 }
 /* }}} */
