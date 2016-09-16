@@ -330,7 +330,7 @@ static int pthreads_store_convert(pthreads_storage *storage, zval *pzval){
 		} break;
 
 		case IS_PHACTOR: {
-			actor* actor = storage->data;
+			actor_t *actor = storage->data;
 
 			if (pthreads_check_opline_ex(EG(current_execute_data), 1, ZEND_CAST, IS_OBJECT)) {
 				ZVAL_OBJ(pzval, &actor->actor);

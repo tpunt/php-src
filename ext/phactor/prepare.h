@@ -20,17 +20,17 @@
 
 #include "php_phactor.h"
 
-void pthreads_prepare_exception_handler(thread* thread);
-void pthreads_prepare_includes(thread* thread);
-void pthreads_prepare_classes(thread* thread);
-void pthreads_prepare_functions(thread* thread);
-void pthreads_prepare_constants(thread *thread);
-void pthreads_prepare_ini(thread *thread);
-void pthreads_prepare_sapi(thread *thread);
-void pthreads_prepare_resource_destructor(thread* thread);
+void pthreads_prepare_exception_handler(thread_t *thread);
+void pthreads_prepare_includes(thread_t *thread);
+void pthreads_prepare_classes(thread_t *thread);
+void pthreads_prepare_functions(thread_t *thread);
+void pthreads_prepare_constants(thread_t *thread);
+void pthreads_prepare_ini(thread_t *thread);
+void pthreads_prepare_sapi(thread_t *thread);
+void pthreads_prepare_resource_destructor(thread_t *thread);
 
 /* {{{ fetch prepared class entry */
-zend_class_entry* pthreads_prepared_entry(thread* thread, zend_class_entry *candidate); /* }}} */
+zend_class_entry* pthreads_prepared_entry(thread_t *thread, zend_class_entry *candidate); /* }}} */
 
 /* {{{ */
 // void pthreads_prepare_parent(pthreads_object_t *thread); /* }}} */

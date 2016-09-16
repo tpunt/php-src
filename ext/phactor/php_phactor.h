@@ -82,10 +82,6 @@ ZEND_TSRMLS_CACHE_EXTERN()
 #endif
 
 /* {{{ */
-
-/* }}} */
-
-/* {{{ */
 #define PROCESS_MESSAGE_TASK 1
 #define SEND_MESSAGE_TASK 2
 
@@ -97,56 +93,59 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 
 typedef struct _mailbox {
-    zval *message;
+    zval *message; // @todo why the separate allocation here?
     struct _mailbox *next_message;
 } mailbox;
 
-typedef struct _actor {
+typedef struct _actor_t {
     zend_object actor;
     mailbox *mailbox;
-    struct _actor *next;
-    zend_string *actor_ref;
-} actor;
+    struct _actor_t *next;
+    zend_string *actor_ref; // @todo make char* instead? It's going to be a fixed length
+    uint16_t blocking;
+    zend_execute_data *state;
+    zval *return_value;
+} actor_t;
 
 struct _actor_system {
     zend_object actor_system;
     // char system_reference[10]; // @todo needed when remote actors are introduced
-    actor *actors;
+    actor_t *actors;
 };
 
 typedef struct _process_message_task {
-    actor *actor;
+    actor_t *actor;
 } process_message_task;
 
 typedef struct _send_message_task {
-    // actor *from_actor; // @todo to get the sending actor info
-    actor *to_actor;
+    // actor_t *from_actor; // @todo to get the sending actor info
+    actor_t *to_actor;
     mailbox *message;
 } send_message_task;
 
-typedef struct _task {
+typedef struct _task_t {
     union {
         process_message_task pmt;
         send_message_task smt;
     } task;
     int task_type;
-    struct _task *next_task;
-} task;
+    struct _task_t *next_task;
+} task_t;
 
-typedef struct _task_queue {
-    task *task;
-} task_queue;
+typedef struct _task_queue_t {
+    task_t *task;
+} task_queue_t;
 
-typedef struct _thread {
+typedef struct _thread_t {
     pthread_t thread;
     pthread_mutex_t mutex;
+    pthread_cond_t cond;
     zend_ulong id;
 	void*** ls;
-} thread;
+} thread_t;
 /* }}} */
 
-extern thread main_thread;
-extern thread scheduler_thread;
+extern thread_t main_thread;
 extern pthread_mutex_t phactor_task_mutex;
 extern dtor_func_t (default_resource_dtor);
 extern zend_object_handlers phactor_actor_handlers;
@@ -155,38 +154,33 @@ extern zend_object_handlers phactor_actor_system_handlers;
 ZEND_EXTERN_MODULE_GLOBALS(phactor)
 
 ZEND_BEGIN_MODULE_GLOBALS(phactor)
-    int php_shutdown;
-    zend_bool daemonise_actor_system;
     zval this; //
     HashTable *resources; // used in store.c::pthreads_resources_keep
     HashTable resolve; // used in prepare.c::pthreads_copy_entry
-    thread *worker_threads; // create own struct instead
-    pthread_mutex_t task_queue_mutex;
-    pthread_mutex_t actor_list_mutex;
 ZEND_END_MODULE_GLOBALS(phactor)
 
 // #include "copy.h"
 
 /* {{{ */
 void *scheduler();
-void process_message(task *task);
-void enqueue_task(task *task);
-void dequeue_task(task *task);
+void process_message(task_t *task);
+void enqueue_task(task_t *task);
+void dequeue_task(task_t *task);
 zend_string *spl_object_hash(zend_object *obj);
 zend_string *spl_zval_object_hash(zval *zval_obj);
 zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval* arg1);
-actor *get_actor_from_hash(zend_string *actor_object_ref);
-actor *get_actor_from_object(zend_object *actor_obj);
-actor *get_actor_from_zval(zval *actor_zval_obj);
-task *create_send_message_task(zval *actor_zval, zval *message);
-void initialise_worker_thread_environments(thread *phactor_thread);
-task *create_process_message_task(actor *actor);
+actor_t *get_actor_from_hash(zend_string *actor_object_ref);
+actor_t *get_actor_from_object(zend_object *actor_obj);
+actor_t *get_actor_from_zval(zval *actor_zval_obj);
+task_t *create_send_message_task(zval *actor_zval, zval *message);
+void initialise_worker_thread_environments(thread_t *phactor_thread);
+task_t *create_process_message_task(actor_t *actor);
 zend_object* phactor_actor_ctor(zend_class_entry *entry);
-void add_new_actor(actor *new_actor);
+void add_new_actor(actor_t *new_actor);
 mailbox *create_new_message(zval *message);
-void send_message(task *task);
-void send_local_message(task *task);
-void send_remote_message(task *task);
+void send_message(task_t *task);
+void send_local_message(task_t *task);
+void send_remote_message(task_t *task);
 void initialise_actor_system();
 /* }}} */
 

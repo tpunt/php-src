@@ -26,9 +26,9 @@
 #include "php_phactor_debug.h"
 #include "php_phactor.h"
 
-void debug_tasks(task_queue tasks)
+void debug_tasks(task_queue_t tasks)
 {
-    task *task = tasks.task;
+    task_t *task = tasks.task;
     int task_count = 0;
 
     printf("Debugging tasks:\n");
@@ -54,7 +54,7 @@ void debug_tasks(task_queue tasks)
 
 void debug_actor_system(struct _actor_system actor_system)
 {
-    actor *current_actor = actor_system.actors;
+    actor_t *current_actor = actor_system.actors;
     int actor_count = 0;
 
     printf("Debugging actors:\n");
