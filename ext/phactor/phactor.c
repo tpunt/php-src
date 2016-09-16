@@ -83,8 +83,9 @@ void *worker_function(thread_t *phactor_thread)
     initialise_worker_thread_environments(phactor_thread);
 
     while (1) {
-        task_t *current_task = tasks.task;
         pthread_mutex_lock(&task_queue_mutex);
+        task_t *current_task = tasks.task;
+        task_t *next_task;
 
         pthread_mutex_lock(&phactor_mutex);
         if (php_shutdown && tasks.task == NULL) {
@@ -99,6 +100,12 @@ void *worker_function(thread_t *phactor_thread)
             continue;
         }
 
+        next_task = current_task->next_task;
+
+        dequeue_task(current_task);
+
+        pthread_mutex_unlock(&task_queue_mutex);
+
         switch (current_task->task_type) {
             case SEND_MESSAGE_TASK:
                 send_message(current_task);
@@ -108,9 +115,9 @@ void *worker_function(thread_t *phactor_thread)
                 break;
         }
 
-        current_task = current_task->next_task;
+        free(current_task);
 
-        pthread_mutex_unlock(&task_queue_mutex);
+        current_task = next_task;
     }
 
     // pthread_mutex_lock(&phactor_task_mutex);
@@ -154,12 +161,16 @@ void process_message(task_t *task)
 
     zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, mail->message);
 
-    zval_ptr_dtor(mail->message);
+    // zval_ptr_dtor(mail->message);
     free(mail->message);
     free(mail);
+
+    if (actor->return_value != NULL) {
+        free(actor->return_value); // tmp hack to fix mem leak
+    }
     actor->return_value = return_value; // @todo memory leak
     // free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
-    dequeue_task(task);
+    // dequeue_task(task);
 }
 
 void send_message(task_t *task)
@@ -170,7 +181,7 @@ void send_message(task_t *task)
         send_local_message(task);
     }
 
-    dequeue_task(task);
+    // dequeue_task(task);
 }
 
 void send_local_message(task_t *task)
@@ -279,6 +290,8 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
     if (Z_ISREF(params[0]) && !Z_ISREF_P(arg1)) {
         ZVAL_COPY_VALUE(arg1, &params[0]);
     }
+
+    // zend_fcall_info_args_clear(&fci, 1);
 
     return retval_ptr;
 }
@@ -427,7 +440,7 @@ void dequeue_task(task_t *task)
 
     if (previous_task == task) {
         tasks.task = tasks.task->next_task;
-        free(task);
+        // free(task);
         // pthread_mutex_unlock(&phactor_task_mutex);
         return;
     }
@@ -439,7 +452,7 @@ void dequeue_task(task_t *task)
 
     previous_task->next_task = current_task->next_task;
 
-    free(task);
+    // free(task);
 
     // pthread_mutex_unlock(&phactor_task_mutex);
 }
@@ -461,7 +474,12 @@ void remove_actor(actor_t *target_actor)
         // zval_ptr_dtor(target_actor->actor);
         // free(target_actor->actor);
         // zend_string_free(target_actor->actor_ref);
-        free(target_actor);
+
+        if (target_actor->return_value != NULL) {
+            free(target_actor->return_value); // tmp hack to fix mem leak
+        }
+
+        // free(target_actor);
         pthread_mutex_unlock(&phactor_actors_mutex);
         return;
     }
@@ -472,7 +490,12 @@ void remove_actor(actor_t *target_actor)
             // zval_ptr_dtor(target_actor->actor);
             // free(target_actor->actor);
             // zend_string_free(target_actor->actor_ref);
-            free(target_actor);
+
+            if (target_actor->return_value != NULL) {
+                free(target_actor->return_value); // tmp hack to fix mem leak
+            }
+
+            // free(target_actor);
             break;
         }
 
