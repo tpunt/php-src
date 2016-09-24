@@ -159,7 +159,7 @@ void process_message(task_t *task)
 
     actor->mailbox = actor->mailbox->next_message;
 
-    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, mail->message);
+    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, task->task.smt.from_actor, mail->message);
 
     // zval_ptr_dtor(mail->message);
     free(mail->message);
@@ -244,7 +244,7 @@ void initialise_actor_system()
 
 /* {{{ zend_call_method
  Only returns the returned zval if retval_ptr != NULL */
-zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval* arg1)
+zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval *from_actor, zval *message)
 {
     int result;
     zend_fcall_info fci;
@@ -252,14 +252,15 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
     zend_class_entry *obj_ce;
     zend_function *receive_function;
     zend_string *receive_function_name;
-    zval params[1];
+    zval params[2];
 
-    ZVAL_COPY_VALUE(&params[0], arg1);
+    ZVAL_COPY_VALUE(&params[0], from_actor);
+    ZVAL_COPY_VALUE(&params[1], message);
 
     fci.size = sizeof(fci);
     fci.object = &object;
     fci.retval = retval_ptr;
-    fci.param_count = 1;
+    fci.param_count = 2;
     fci.params = params;
     fci.no_separation = 1;
 
@@ -287,9 +288,9 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
 
     // @todo should this (references) be allowed?
     /* copy arguments back, they might be changed by references */
-    if (Z_ISREF(params[0]) && !Z_ISREF_P(arg1)) {
-        ZVAL_COPY_VALUE(arg1, &params[0]);
-    }
+    // if (Z_ISREF(params[0]) && !Z_ISREF_P(arg1)) {
+    //     ZVAL_COPY_VALUE(arg1, &params[0]);
+    // }
 
     // zend_fcall_info_args_clear(&fci, 1);
 
@@ -377,12 +378,13 @@ void add_new_actor(actor_t *new_actor)
     pthread_mutex_unlock(&phactor_actors_mutex);
 }
 
-task_t *create_send_message_task(zval *actor_zval, zval *message)
+task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zval *message)
 {
-    actor_t *actor = get_actor_from_zval(actor_zval);
+    actor_t *to_actor = get_actor_from_zval(to_actor_zval);
     task_t *new_task = malloc(sizeof(task_t));
 
-    new_task->task.smt.to_actor = actor;
+    new_task->task.smt.from_actor = from_actor_zval;
+    new_task->task.smt.to_actor = to_actor;
     new_task->task.smt.message = create_new_message(message);
     new_task->task_type = SEND_MESSAGE_TASK;
     new_task->next_task = NULL;
@@ -591,71 +593,12 @@ static zend_execute_data* zend_freeze_call_stack(zend_execute_data *execute_data
 }
 /* }}} */
 
-/*
-General todo:
-1.
-Remove the mutex on the whole of the event loop, otherwise only one thread will
-be able to execute an actor at once. At the very least the call to receive
-should not be in the mutex lock.
-2.
-Add the method `isRemoteActor()` onto the actor object.
-
-
-
-store thread_offset as a global (rather than using i) - necessary anymore if we
-are not going to use pthread conditions?
-
-store worker_threads as a global to enable other threads to send signals to each other
-
-store current_message_value as a zend global since it is thread-specific only
-
-
-Actors may be blocking if they either:
-A) invoke their receiveBlock() method
-B) are executing a particularly CPU intensive task (perhaps count frame slots?)
-C) are executing an IO-bound task that does not utilise the CPU
-
-In these instances, the worker thread needs to save the state of the currently
-executing actor, add it back onto the task queue, and then restore its state
-before continuing with execution.
-
-For A), an additional member to the actor struct (`new_message`) will need to be
-added to act as a flag for when a check should be performed to see if the actor
-is manually blocking. This flag will be set when either receiveBlock() is called,
-or when a new message is sent to a manually blocking actor. Flags:
- -1 = not manually blocking = process the actor
-  0 = manually blocking with no new messages (don't attempt to process the actor)
-  1 = manually blocking with at least 1 new message (attempt to process the actor)
-
-`blocking`
-0 - not blocking (process)
-1 - blocking via preemptive interrupt (process)
-2 - blocking via manual interrupt without new messages (don't process)
-3 - blocking via manual interrupt with new messages (process)
-
-For B) and C), we should check if the actor has a current state, and if so,
-restore it before executing it. An additional member to the actor struct
-(`state`) will need to be added, where a check to see if it has a previous state
-(`state != NULL`) will need to be performed.
-
-Store actors in a hashtable with actors' UUID as primary key instead of singly-
-linked list as there is now?
-
----
-
-When Actor::receiveBlock is called, freeze the current call stack for the
-invocation context. Set a special flag for the blocking actor so that when it is
-processed, a notification can be used to resume the frozen call stack.
-
-Perhaps add the frozen call stack to a singly-linked list with an associated ID,
-where this ID is stored in the actor (assigned upon receiveBlock call)? That way,
-upon processing that actor, the global singly-linked list can be traversed to
-find the frozen call stack, which can then in turn be added to the task queue.
-*/
-
+// @todo currently impossible with current ZE
 void receive_block(zval *actor_zval, zval *return_value)
 {
     actor_t *actor = get_actor_from_zval(actor_zval);
+
+    zend_execute_data *execute_data = EG(current_execute_data);
 
     actor->blocking = 1;
     actor->state = zend_freeze_call_stack(EG(current_execute_data));
@@ -663,26 +606,20 @@ void receive_block(zval *actor_zval, zval *return_value)
 
     EG(current_execute_data) = NULL;
 
-//     pthread_mutex_lock(&worker_threads[i].mutex);
-
-//     while (!PHACTOR_ZG(current_message_value)) {
-//         pthread_cond_wait(&worker_threads[i].cond, &worker_threads[i].mutex)
-//     }
-
-    // return PHACTOR_ZG(current_message_value);
+    // return PHACTOR_ZG(current_message_value); // not the solution...
 }
 
 // force shut down the actor system (used for daemonised actor systems)
 void force_shutdown_actor_system()
 {
-    pthread_mutex_lock(&phactor_mutex);
+    pthread_mutex_lock(&phactor_mutex); // @todo needed? We can only set it to 1 anyway
     php_shutdown = 1;
     pthread_mutex_unlock(&phactor_mutex);
 }
 
 void scheduler_blocking()
 {
-    pthread_mutex_lock(&phactor_mutex);
+    pthread_mutex_lock(&phactor_mutex); // @todo really needed?
     if (daemonise_actor_system == 0) {
         php_shutdown = 1;
     }
@@ -761,6 +698,7 @@ ZEND_BEGIN_ARG_INFO(Actor_remove_arginfo, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO(Actor_abstract_receive_arginfo, 0)
+    ZEND_ARG_INFO(0, sender)
 	ZEND_ARG_INFO(0, message)
 ZEND_END_ARG_INFO()
 
@@ -780,7 +718,7 @@ PHP_METHOD(ActorSystem, __construct)
 }
 /* }}} */
 
-/* {{{ proto string ActorSystem::shutdown() */
+/* {{{ proto void ActorSystem::shutdown() */
 PHP_METHOD(ActorSystem, shutdown)
 {
 	if (zend_parse_parameters_none() != SUCCESS) {
@@ -791,7 +729,7 @@ PHP_METHOD(ActorSystem, shutdown)
 }
 /* }}} */
 
-/* {{{ proto string ActorSystem::block() */
+/* {{{ proto void ActorSystem::block() */
 PHP_METHOD(ActorSystem, block)
 {
 	if (zend_parse_parameters_none() != SUCCESS) {
@@ -813,7 +751,7 @@ PHP_METHOD(Actor, send)
 		return;
 	}
 
-    enqueue_task(create_send_message_task(actor_zval, message));
+    enqueue_task(create_send_message_task(getThis(), actor_zval, message));
 }
 /* }}} */
 
@@ -860,87 +798,6 @@ zend_function_entry Actor_methods[] = {
 
 
 
-void initialise_actor_system_class(void)
-{
-    zend_class_entry ce;
-	zend_object_handlers *zh;
-
-	INIT_CLASS_ENTRY(ce, "ActorSystem", ActorSystem_methods);
-	ActorSystem_ce = zend_register_internal_class(&ce);
-    // ActorSystem_ce->create_object = phactor_actor_system_ctor;
-
-	zh = zend_get_std_object_handlers();
-
-	memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
-}
-
-// typedef void (*zend_execute_ex_function)(zend_execute_data *);
-// zend_execute_ex_function zend_execute_ex_hook = NULL;
-//
-// void pthreads_execute_ex(zend_execute_data *data) {
-//     if (zend_execute_ex_hook) {
-// 		zend_execute_ex_hook(data);
-// 	} else execute_ex(data);
-//
-// 	if (Z_TYPE(PHACTOR_ZG(this)) != IS_UNDEF) {
-// 		if (EG(exception) &&
-// 			(!EG(current_execute_data) || !EG(current_execute_data)->prev_execute_data))
-// 			zend_try_exception_handler();
-// 	}
-// }
-
-void initialise_actor_class(void)
-{
-    zend_class_entry ce;
-	zend_object_handlers *zh;
-
-    // zend_execute_ex_hook = zend_execute_ex;
-	// zend_execute_ex = pthreads_execute_ex;
-
-	INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);
-	Actor_ce = zend_register_internal_class(&ce);
-	Actor_ce->ce_flags |= ZEND_ACC_ABSTRACT;
-    Actor_ce->create_object = phactor_actor_ctor;
-
-	zh = zend_get_std_object_handlers();
-
-	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
-
-    // phactor_actor_handlers.dtor_obj = php_actor_free_object;
-}
-
-void initialise_globals(void)
-{
-//     pthread_mutexattr_t at;
-// 	pthread_mutexattr_init(&at);
-//
-// #if defined(PTHREAD_MUTEX_RECURSIVE) || defined(__FreeBSD__)
-// 	pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE);
-// #else
-// 	pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE_NP);
-// #endif
-//
-//     pthread_mutex_init(&phactor_task_mutex, &at);
-    pthread_mutex_init(&phactor_task_mutex, NULL);
-
-    pthread_mutex_init(&task_queue_mutex, NULL);
-    pthread_mutex_init(&actor_list_mutex, NULL);
-}
-
-void php_phactor_init(void)
-{
-    initialise_globals();
-    initialise_actor_system_class();
-    initialise_actor_class();
-}
-
-void deinitialise_globals(void)
-{
-    pthread_mutex_destroy(&phactor_task_mutex);
-    pthread_mutex_destroy(&task_queue_mutex);
-    pthread_mutex_destroy(&actor_list_mutex);
-}
-
 void phactor_globals_ctor(zend_phactor_globals *phactor_globals)
 {
     phactor_globals->resources = NULL;
@@ -956,7 +813,25 @@ void phactor_globals_dtor(zend_phactor_globals *phactor_globals)
 /* {{{ PHP_MINIT_FUNCTION */
 PHP_MINIT_FUNCTION(phactor)
 {
-    php_phactor_init();
+    zend_class_entry ce;
+	zend_object_handlers *zh = zend_get_std_object_handlers();
+
+    /* ActorSystem Class */
+	INIT_CLASS_ENTRY(ce, "ActorSystem", ActorSystem_methods);
+	ActorSystem_ce = zend_register_internal_class(&ce);
+    // ActorSystem_ce->create_object = phactor_actor_system_ctor;
+
+	memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
+
+    /* Actor Class */
+	INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);
+	Actor_ce = zend_register_internal_class(&ce);
+	Actor_ce->ce_flags |= ZEND_ACC_ABSTRACT;
+    Actor_ce->create_object = phactor_actor_ctor;
+
+	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
+
+    // phactor_actor_handlers.dtor_obj = php_actor_free_object;
 
     ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
 
@@ -970,8 +845,6 @@ PHP_MINIT_FUNCTION(phactor)
 /* {{{ PHP_MSHUTDOWN_FUNCTION */
 PHP_MSHUTDOWN_FUNCTION(phactor)
 {
-    deinitialise_globals();
-
 	return SUCCESS;
 }
 /* }}} */
@@ -1011,6 +884,31 @@ PHP_MINFO_FUNCTION(phactor)
 }
 /* }}} */
 
+PHP_GINIT_FUNCTION(phactor)
+{
+    //     pthread_mutexattr_t at;
+    // 	pthread_mutexattr_init(&at);
+    //
+    // #if defined(PTHREAD_MUTEX_RECURSIVE) || defined(__FreeBSD__)
+    // 	pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE);
+    // #else
+    // 	pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE_NP);
+    // #endif
+    //
+    //     pthread_mutex_init(&phactor_task_mutex, &at);
+    pthread_mutex_init(&phactor_task_mutex, NULL);
+
+    pthread_mutex_init(&task_queue_mutex, NULL);
+    pthread_mutex_init(&actor_list_mutex, NULL);
+}
+
+PHP_GSHUTDOWN_FUNCTION(phactor)
+{
+    pthread_mutex_destroy(&phactor_task_mutex);
+    pthread_mutex_destroy(&task_queue_mutex);
+    pthread_mutex_destroy(&actor_list_mutex);
+}
+
 /* {{{ phactor_module_entry */
 zend_module_entry phactor_module_entry = {
 	STANDARD_MODULE_HEADER,
@@ -1022,22 +920,15 @@ zend_module_entry phactor_module_entry = {
 	PHP_RSHUTDOWN(phactor),
 	PHP_MINFO(phactor),
 	PHP_PHACTOR_VERSION,
-	STANDARD_MODULE_PROPERTIES
+    PHP_MODULE_GLOBALS(phactor),
+    PHP_GINIT(phactor),
+    PHP_GSHUTDOWN(phactor),
+    NULL,
+	STANDARD_MODULE_PROPERTIES_EX
 };
 /* }}} */
 
 #ifdef COMPILE_DL_PHACTOR
-#ifdef ZTS
 ZEND_TSRMLS_CACHE_DEFINE()
-#endif
 ZEND_GET_MODULE(phactor)
 #endif
-
-/*
- * Local variables:
- * tab-width: 4
- * c-basic-offset: 4
- * End:
- * vim600: noet sw=4 ts=4 fdm=marker
- * vim<600: noet sw=4 ts=4
- */

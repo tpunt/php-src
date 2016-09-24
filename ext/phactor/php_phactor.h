@@ -93,6 +93,7 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 
 typedef struct _mailbox {
+    zval *from_actor;
     zval *message; // @todo why the separate allocation here?
     struct _mailbox *next_message;
 } mailbox;
@@ -118,7 +119,7 @@ typedef struct _process_message_task {
 } process_message_task;
 
 typedef struct _send_message_task {
-    // actor_t *from_actor; // @todo to get the sending actor info
+    zval *from_actor;
     actor_t *to_actor;
     mailbox *message;
 } send_message_task;
@@ -168,11 +169,11 @@ void enqueue_task(task_t *task);
 void dequeue_task(task_t *task);
 zend_string *spl_object_hash(zend_object *obj);
 zend_string *spl_zval_object_hash(zval *zval_obj);
-zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval* arg1);
+zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval *from_actor, zval *message);
 actor_t *get_actor_from_hash(zend_string *actor_object_ref);
 actor_t *get_actor_from_object(zend_object *actor_obj);
 actor_t *get_actor_from_zval(zval *actor_zval_obj);
-task_t *create_send_message_task(zval *actor_zval, zval *message);
+task_t *create_send_message_task(zval *from_actor, zval *actor_zval, zval *message);
 void initialise_worker_thread_environments(thread_t *phactor_thread);
 task_t *create_process_message_task(actor_t *actor);
 zend_object* phactor_actor_ctor(zend_class_entry *entry);
