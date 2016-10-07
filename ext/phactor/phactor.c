@@ -76,9 +76,9 @@ void *worker_function(thread_t *phactor_thread)
     SG(server_context) = PHACTOR_SG(main_thread.ls, server_context);
 
     PG(expose_php) = 0;
-	PG(auto_globals_jit) = 0;
+    PG(auto_globals_jit) = 0;
 
-	php_request_startup();
+    php_request_startup();
 
     initialise_worker_thread_environments(phactor_thread);
 
@@ -121,8 +121,10 @@ void *worker_function(thread_t *phactor_thread)
     }
 
     // pthread_mutex_lock(&phactor_task_mutex);
-    php_request_shutdown((void*) NULL);
-	ts_free_thread();
+
+    pthreads_prepared_shutdown(phactor_thread);
+    // php_request_shutdown((void*) NULL);
+	// ts_free_thread();
     // pthread_mutex_unlock(&phactor_task_mutex);
 
     pthread_exit(NULL);
@@ -151,25 +153,38 @@ void initialise_worker_thread_environments(thread_t *phactor_thread)
     pthread_mutex_unlock(&phactor_mutex);
 }
 
+/*
+The value.obj zend_object has changed for the zval being stored for some reason.
+It originally held a zend_object of the sending actor, and now it holds the
+actor_system object... Maybe GC?
+
+*/
+
 void process_message(task_t *task)
 {
     mailbox *mail = task->task.pmt.actor->mailbox;
     actor_t *actor = task->task.pmt.actor;
     zval *return_value = malloc(sizeof(zval));
+    zval *sender = malloc(sizeof(zval));
 
+    ZVAL_OBJ(sender, &mail->from_actor->actor);
     actor->mailbox = actor->mailbox->next_message;
 
-    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, task->task.smt.from_actor, mail->message);
-
+    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, sender, mail->message);
     // zval_ptr_dtor(mail->message);
     free(mail->message);
     free(mail);
 
-    if (actor->return_value != NULL) {
-        free(actor->return_value); // tmp hack to fix mem leak
-    }
-    actor->return_value = return_value; // @todo memory leak
-    // free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
+    // zval_ptr_dtor(sender);
+    free(sender);
+
+    // if (actor->return_value != NULL) {
+        // free(actor->return_value); // tmp hack to fix mem leak
+    // }
+    // actor->return_value = return_value; // @todo memory leak
+    free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
+    // zval_ptr_dtor(mail->from_actor);
+    // free(mail->message);
     // dequeue_task(task);
 }
 
@@ -238,8 +253,6 @@ void initialise_actor_system()
         pthread_cond_init(&worker_threads[i].cond, NULL);
         pthread_create(&worker_threads[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &worker_threads[i]);
     }
-
-    // pthread_create(&scheduler_thread.thread, NULL, scheduler_startup, NULL);
 }
 
 /* {{{ zend_call_method
@@ -254,6 +267,14 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
     zend_string *receive_function_name;
     zval params[2];
 
+    // actor_t *obj = emalloc(sizeof(actor_t));
+    // ZVAL_OBJ(obj, Z_OBJ_P(from_actor));
+    // memcpy(obj, Z_OBJ_P(from_actor), sizeof(*actor_t));
+	// zend_object_std_init(&obj->actor, Z_OBJCE_P(from_actor));
+    // ZVAL_COPY_VALUE(&params[0], obj->actor);
+
+    // ++GC_REFCOUNT(Z_OBJ_P(from_actor));
+
     ZVAL_COPY_VALUE(&params[0], from_actor);
     ZVAL_COPY_VALUE(&params[1], message);
 
@@ -265,7 +286,6 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
     fci.no_separation = 1;
 
     receive_function_name = zend_string_init(ZEND_STRL("receive"), 1);
-	GC_REFCOUNT(receive_function_name)++;
     receive_function = zend_hash_find_ptr(&object.ce->function_table, receive_function_name);
 
     fcc.initialized = 1;
@@ -276,6 +296,9 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
 
     result = zend_call_function(&fci, &fcc);
     // zval_ptr_dtor(&fci.function_name);
+
+    // zval_ptr_dtor(&fci.params[0]);
+    // zval_ptr_dtor(&fci.params[1]);
 
     if (result == FAILURE) {
         /* error at c-level */
@@ -291,6 +314,9 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
     // if (Z_ISREF(params[0]) && !Z_ISREF_P(arg1)) {
     //     ZVAL_COPY_VALUE(arg1, &params[0]);
     // }
+
+    // ZVAL_COPY_VALUE(from_actor, &params[0]);
+    // ZVAL_COPY_VALUE(message, &params[1]);
 
     // zend_fcall_info_args_clear(&fci, 1);
 
@@ -381,22 +407,23 @@ void add_new_actor(actor_t *new_actor)
 task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zval *message)
 {
     actor_t *to_actor = get_actor_from_zval(to_actor_zval);
+    actor_t *from_actor = get_actor_from_zval(from_actor_zval);
     task_t *new_task = malloc(sizeof(task_t));
 
-    new_task->task.smt.from_actor = from_actor_zval;
     new_task->task.smt.to_actor = to_actor;
-    new_task->task.smt.message = create_new_message(message);
+    new_task->task.smt.message = create_new_message(from_actor, message);
     new_task->task_type = SEND_MESSAGE_TASK;
     new_task->next_task = NULL;
 
     return new_task;
 }
 
-mailbox *create_new_message(zval *message)
+mailbox *create_new_message(actor_t *from_actor, zval *message)
 {
     mailbox *new_message = malloc(sizeof(mailbox));
+    new_message->from_actor = from_actor;
     new_message->message = malloc(sizeof(zval));
-    ZVAL_COPY(new_message->message, message);
+    ZVAL_COPY(new_message->message, message); // @todo ZVAL_DUP instead?
     new_message->next_message = NULL;
 
     return new_message;
@@ -461,25 +488,19 @@ void dequeue_task(task_t *task)
 
 void remove_actor(actor_t *target_actor)
 {
-    if (target_actor == NULL) {
-        // debugging purposes only - remote actor?
-        printf("Tried to remove to a non-existent actor object\n");
-        return;
-    }
-
     pthread_mutex_lock(&phactor_actors_mutex);
 
     actor_t *current_actor = actor_system.actors;
 
     if (current_actor == target_actor) {
         actor_system.actors = current_actor->next;
-        // zval_ptr_dtor(target_actor->actor);
+        // zend_object_std_dtor(&target_actor->actor);
         // free(target_actor->actor);
         // zend_string_free(target_actor->actor_ref);
 
-        if (target_actor->return_value != NULL) {
-            free(target_actor->return_value); // tmp hack to fix mem leak
-        }
+        // if (target_actor->return_value != NULL) {
+        //     free(target_actor->return_value); // tmp hack to fix mem leak
+        // }
 
         // free(target_actor);
         pthread_mutex_unlock(&phactor_actors_mutex);
@@ -489,13 +510,13 @@ void remove_actor(actor_t *target_actor)
     while (current_actor != target_actor) {
         if (current_actor->next == target_actor) {
             current_actor->next = current_actor->next->next;
-            // zval_ptr_dtor(target_actor->actor);
+            // zend_object_std_dtor(&target_actor->actor);
             // free(target_actor->actor);
             // zend_string_free(target_actor->actor_ref);
 
-            if (target_actor->return_value != NULL) {
-                free(target_actor->return_value); // tmp hack to fix mem leak
-            }
+            // if (target_actor->return_value != NULL) {
+            //     free(target_actor->return_value); // tmp hack to fix mem leak
+            // }
 
             // free(target_actor);
             break;
@@ -523,74 +544,74 @@ void php_actor_free_object(zend_object *obj)
     }
 
     remove_actor(target_actor);
-    zend_object_std_dtor(obj);
+    // zend_object_std_dtor(obj);
 }
 
 // taken (and adapted) from zend_generators.c
-static void zend_restore_call_stack(actor_t *actor) /* {{{ */
-{
-	zend_execute_data *call, *new_call, *prev_call = NULL;
-
-	call = actor->state;
-	do {
-		new_call = zend_vm_stack_push_call_frame(
-			(ZEND_CALL_INFO(call) & ~ZEND_CALL_ALLOCATED),
-			call->func,
-			ZEND_CALL_NUM_ARGS(call),
-			(Z_TYPE(call->This) == IS_UNDEF) ?
-				(zend_class_entry*)Z_OBJ(call->This) : NULL,
-			(Z_TYPE(call->This) != IS_UNDEF) ?
-				Z_OBJ(call->This) : NULL);
-		memcpy(((zval*)new_call) + ZEND_CALL_FRAME_SLOT, ((zval*)call) + ZEND_CALL_FRAME_SLOT, ZEND_CALL_NUM_ARGS(call) * sizeof(zval));
-		new_call->prev_execute_data = prev_call;
-		prev_call = new_call;
-
-		call = call->prev_execute_data;
-	} while (call);
-	actor->state->call = prev_call;
-	efree(actor->state);
-	actor->state = NULL;
-}
-/* }}} */
-
-// taken from zend_generators.c
-static zend_execute_data* zend_freeze_call_stack(zend_execute_data *execute_data) /* {{{ */
-{
-	size_t used_stack;
-	zend_execute_data *call, *new_call, *prev_call = NULL;
-	zval *stack;
-
-	/* calculate required stack size */
-	used_stack = 0;
-	call = EX(call);
-	do {
-		used_stack += ZEND_CALL_FRAME_SLOT + ZEND_CALL_NUM_ARGS(call);
-		call = call->prev_execute_data;
-	} while (call);
-
-	stack = emalloc(used_stack * sizeof(zval));
-
-	/* save stack, linking frames in reverse order */
-	call = EX(call);
-	do {
-		size_t frame_size = ZEND_CALL_FRAME_SLOT + ZEND_CALL_NUM_ARGS(call);
-
-		new_call = (zend_execute_data*)(stack + used_stack - frame_size);
-		memcpy(new_call, call, frame_size * sizeof(zval));
-		used_stack -= frame_size;
-		new_call->prev_execute_data = prev_call;
-		prev_call = new_call;
-
-		new_call = call->prev_execute_data;
-		zend_vm_stack_free_call_frame(call);
-		call = new_call;
-	} while (call);
-
-	execute_data->call = NULL;
-	ZEND_ASSERT(prev_call == (zend_execute_data*)stack);
-
-	return prev_call;
-}
+// static void zend_restore_call_stack(actor_t *actor) /* {{{ */
+// {
+// 	zend_execute_data *call, *new_call, *prev_call = NULL;
+//
+// 	call = actor->state;
+// 	do {
+// 		new_call = zend_vm_stack_push_call_frame(
+// 			(ZEND_CALL_INFO(call) & ~ZEND_CALL_ALLOCATED),
+// 			call->func,
+// 			ZEND_CALL_NUM_ARGS(call),
+// 			(Z_TYPE(call->This) == IS_UNDEF) ?
+// 				(zend_class_entry*)Z_OBJ(call->This) : NULL,
+// 			(Z_TYPE(call->This) != IS_UNDEF) ?
+// 				Z_OBJ(call->This) : NULL);
+// 		memcpy(((zval*)new_call) + ZEND_CALL_FRAME_SLOT, ((zval*)call) + ZEND_CALL_FRAME_SLOT, ZEND_CALL_NUM_ARGS(call) * sizeof(zval));
+// 		new_call->prev_execute_data = prev_call;
+// 		prev_call = new_call;
+//
+// 		call = call->prev_execute_data;
+// 	} while (call);
+// 	actor->state->call = prev_call;
+// 	efree(actor->state);
+// 	actor->state = NULL;
+// }
+// /* }}} */
+//
+// // taken from zend_generators.c
+// static zend_execute_data* zend_freeze_call_stack(zend_execute_data *execute_data) /* {{{ */
+// {
+// 	size_t used_stack;
+// 	zend_execute_data *call, *new_call, *prev_call = NULL;
+// 	zval *stack;
+//
+// 	/* calculate required stack size */
+// 	used_stack = 0;
+// 	call = EX(call);
+// 	do {
+// 		used_stack += ZEND_CALL_FRAME_SLOT + ZEND_CALL_NUM_ARGS(call);
+// 		call = call->prev_execute_data;
+// 	} while (call);
+//
+// 	stack = emalloc(used_stack * sizeof(zval));
+//
+// 	/* save stack, linking frames in reverse order */
+// 	call = EX(call);
+// 	do {
+// 		size_t frame_size = ZEND_CALL_FRAME_SLOT + ZEND_CALL_NUM_ARGS(call);
+//
+// 		new_call = (zend_execute_data*)(stack + used_stack - frame_size);
+// 		memcpy(new_call, call, frame_size * sizeof(zval));
+// 		used_stack -= frame_size;
+// 		new_call->prev_execute_data = prev_call;
+// 		prev_call = new_call;
+//
+// 		new_call = call->prev_execute_data;
+// 		zend_vm_stack_free_call_frame(call);
+// 		call = new_call;
+// 	} while (call);
+//
+// 	execute_data->call = NULL;
+// 	ZEND_ASSERT(prev_call == (zend_execute_data*)stack);
+//
+// 	return prev_call;
+// }
 /* }}} */
 
 // @todo currently impossible with current ZE
@@ -598,10 +619,10 @@ void receive_block(zval *actor_zval, zval *return_value)
 {
     actor_t *actor = get_actor_from_zval(actor_zval);
 
-    zend_execute_data *execute_data = EG(current_execute_data);
+    // zend_execute_data *execute_data = EG(current_execute_data);
 
     actor->blocking = 1;
-    actor->state = zend_freeze_call_stack(EG(current_execute_data));
+    // actor->state = zend_freeze_call_stack(EG(current_execute_data));
     actor->return_value = actor_zval; // tmp
 
     EG(current_execute_data) = NULL;
@@ -831,7 +852,7 @@ PHP_MINIT_FUNCTION(phactor)
 
 	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
 
-    // phactor_actor_handlers.dtor_obj = php_actor_free_object;
+    phactor_actor_handlers.dtor_obj = php_actor_free_object;
 
     ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
 

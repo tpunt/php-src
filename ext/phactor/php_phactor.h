@@ -93,7 +93,7 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 
 typedef struct _mailbox {
-    zval *from_actor;
+    struct _actor_t *from_actor;
     zval *message; // @todo why the separate allocation here?
     struct _mailbox *next_message;
 } mailbox;
@@ -106,6 +106,7 @@ typedef struct _actor_t {
     uint16_t blocking;
     zend_execute_data *state;
     zval *return_value;
+    // zval *actor_z;
 } actor_t;
 
 struct _actor_system {
@@ -119,7 +120,6 @@ typedef struct _process_message_task {
 } process_message_task;
 
 typedef struct _send_message_task {
-    zval *from_actor;
     actor_t *to_actor;
     mailbox *message;
 } send_message_task;
@@ -141,8 +141,8 @@ typedef struct _thread_t {
     pthread_t thread;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
-    zend_ulong id;
-	void*** ls;
+    zend_ulong id; // local storage ID used to fetch local storage data
+	void*** ls; // pointer to local storage in TSRM
 } thread_t;
 /* }}} */
 
@@ -178,7 +178,7 @@ void initialise_worker_thread_environments(thread_t *phactor_thread);
 task_t *create_process_message_task(actor_t *actor);
 zend_object* phactor_actor_ctor(zend_class_entry *entry);
 void add_new_actor(actor_t *new_actor);
-mailbox *create_new_message(zval *message);
+mailbox *create_new_message(actor_t *from_actor, zval *message);
 void send_message(task_t *task);
 void send_local_message(task_t *task);
 void send_remote_message(task_t *task);

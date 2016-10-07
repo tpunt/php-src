@@ -28,6 +28,11 @@ static zend_trait_precedence * pthreads_preparation_copy_trait_precedence(thread
 static zend_trait_method_reference * pthreads_preparation_copy_trait_method_reference(thread_t* thread, zend_trait_method_reference *reference);
 static void pthreads_prepared_resource_dtor(zval *zv); /* }}} */
 
+/*
+Copy class entries
+
+*/
+
 /* {{{ */
 static zend_class_entry* pthreads_copy_entry(thread_t* thread, zend_class_entry *candidate) {
 	zend_class_entry *prepared;
