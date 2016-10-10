@@ -153,7 +153,7 @@ void process_message(task_t *task)
     ZVAL_OBJ(sender, &mail->from_actor->actor);
     actor->mailbox = actor->mailbox->next_message;
 
-    zend_call_user_method(actor->actor, "receive", sizeof("receive") - 1, return_value, sender, mail->message);
+    zend_call_user_method(actor->actor, return_value, sender, mail->message);
     // zval_ptr_dtor(mail->message);
     free(mail->message);
     free(mail);
@@ -236,7 +236,7 @@ void initialise_actor_system()
 }
 
 /* {{{ zend_call_method */
-zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval *from_actor, zval *message)
+zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_actor, zval *message)
 {
     int result;
     zend_fcall_info fci;
@@ -277,7 +277,7 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
                 "Couldn't execute method %s%s%s",
                 obj_ce ? ZSTR_VAL(obj_ce->name) : "",
                 obj_ce ? "::" : "",
-                function_name);
+                receive_function_name);
         }
     }
 
@@ -289,6 +289,7 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
 zend_string *spl_object_hash(zend_object *obj)
 {
     // @todo this is for when remote actors are introduced - not needed for now
+    // this should generate a UUID instead...
     return strpprintf(20, "%s:%08d", "node_id_here", obj->handle);
 }
 
@@ -300,14 +301,14 @@ zend_string *spl_zval_object_hash(zval *zval_obj)
 
 actor_t *get_actor_from_object(zend_object *actor_obj)
 {
-    pthread_mutex_lock(&phactor_actors_mutex);
+    pthread_mutex_lock(&PHACTOR_G(phactor_actors_mutex));
     actor_t *current_actor = PHACTOR_G(actor_system).actors;
 
     while (current_actor != NULL && current_actor->actor.handle != actor_obj->handle) {
         current_actor = current_actor->next;
     }
 
-    pthread_mutex_unlock(&phactor_actors_mutex);
+    pthread_mutex_unlock(&PHACTOR_G(phactor_actors_mutex));
 
     if (current_actor != NULL) {
         return current_actor;
@@ -340,13 +341,13 @@ actor_t *get_actor_from_zval(zval *actor_zval_obj)
 
 void add_new_actor(actor_t *new_actor)
 {
-    pthread_mutex_lock(&phactor_actors_mutex);
+    pthread_mutex_lock(&PHACTOR_G(phactor_actors_mutex));
     actor_t *previous_actor = PHACTOR_G(actor_system).actors;
     actor_t *current_actor = PHACTOR_G(actor_system).actors;
 
     if (previous_actor == NULL) {
         PHACTOR_G(actor_system).actors = new_actor;
-        pthread_mutex_unlock(&phactor_actors_mutex);
+        pthread_mutex_unlock(&PHACTOR_G(phactor_actors_mutex));
         return;
     }
 
@@ -357,7 +358,7 @@ void add_new_actor(actor_t *new_actor)
 
     previous_actor->next = new_actor;
 
-    pthread_mutex_unlock(&phactor_actors_mutex);
+    pthread_mutex_unlock(&PHACTOR_G(phactor_actors_mutex));
 }
 
 task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zval *message)
@@ -398,13 +399,13 @@ task_t *create_process_message_task(actor_t *actor)
 
 void enqueue_task(task_t *new_task)
 {
-    pthread_mutex_lock(&phactor_task_mutex);
+    pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
     task_t *previous_task = PHACTOR_G(tasks).task;
     task_t *current_task = PHACTOR_G(tasks).task;
 
     if (previous_task == NULL) {
         PHACTOR_G(tasks).task = new_task;
-        pthread_mutex_unlock(&phactor_task_mutex);
+        pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
         return;
     }
 
@@ -414,7 +415,7 @@ void enqueue_task(task_t *new_task)
     }
 
     previous_task->next_task = new_task;
-    pthread_mutex_unlock(&phactor_task_mutex);
+    pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
 }
 
 /* This function is only invoked in the scheduler, which already locks phactor_task_mutex */
@@ -488,17 +489,15 @@ void remove_actor_object(zval *actor)
 // @todo currently unused
 void php_actor_free_object(zend_object *obj)
 {
-    // zend_object_std_dtor(obj);return;
     actor_t *target_actor = get_actor_from_object(obj);
 
-    if (target_actor == NULL) {
-        // @debug purposes only - could be remote actor?
-        printf("Tried to free a non-existent object\n");
+    if (target_actor != NULL) {
+        remove_actor(target_actor);
         return;
     }
 
-    remove_actor(target_actor);
-    // zend_object_std_dtor(obj);
+    // @debug purposes only - could be remote actor?
+    printf("Tried to free a non-existent object\n");
 }
 
 // taken (and adapted) from zend_generators.c
@@ -619,6 +618,7 @@ void scheduler_blocking()
 void phactor_actor_write_property(zval *object, zval *member, zval *value, void **cache_slot)
 {
     //
+    rebuild_object_properties
 }
 
 zend_object* phactor_actor_ctor(zend_class_entry *entry)
