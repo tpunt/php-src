@@ -50,8 +50,6 @@ thread_t main_thread;
 pthread_mutex_t phactor_mutex;
 pthread_mutex_t phactor_task_mutex;
 pthread_mutex_t phactor_actors_mutex;
-pthread_mutex_t task_queue_mutex;
-pthread_mutex_t actor_list_mutex;
 struct _actor_system actor_system;
 task_queue_t tasks;
 int php_shutdown = 0;
@@ -83,20 +81,18 @@ void *worker_function(thread_t *phactor_thread)
     initialise_worker_thread_environments(phactor_thread);
 
     while (1) {
-        pthread_mutex_lock(&task_queue_mutex);
-        task_t *current_task = tasks.task;
+        pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
+        task_t *current_task = PHACTOR_G(tasks).task;
         task_t *next_task;
 
-        pthread_mutex_lock(&phactor_mutex);
-        if (php_shutdown && tasks.task == NULL) {
-            pthread_mutex_unlock(&phactor_mutex);
+        if (PHACTOR_G(php_shutdown) && PHACTOR_G(tasks).task == NULL) {
+            pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
             break;
         }
-        pthread_mutex_unlock(&phactor_mutex);
 
         if (current_task == NULL) {
-            current_task = tasks.task;
-            pthread_mutex_unlock(&task_queue_mutex);
+            current_task = PHACTOR_G(tasks).task;
+            pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
             continue;
         }
 
@@ -104,7 +100,7 @@ void *worker_function(thread_t *phactor_thread)
 
         dequeue_task(current_task);
 
-        pthread_mutex_unlock(&task_queue_mutex);
+        pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
 
         switch (current_task->task_type) {
             case SEND_MESSAGE_TASK:
@@ -120,19 +116,13 @@ void *worker_function(thread_t *phactor_thread)
         current_task = next_task;
     }
 
-    // pthread_mutex_lock(&phactor_task_mutex);
-
     pthreads_prepared_shutdown(phactor_thread);
-    // php_request_shutdown((void*) NULL);
-	// ts_free_thread();
-    // pthread_mutex_unlock(&phactor_task_mutex);
-
     pthread_exit(NULL);
 }
 
 void initialise_worker_thread_environments(thread_t *phactor_thread)
 {
-    pthread_mutex_lock(&phactor_mutex);
+    pthread_mutex_lock(&PHACTOR_G(phactor_mutex));
     // taken from pthreads...
 	pthreads_prepare_sapi(phactor_thread);
 
@@ -150,15 +140,8 @@ void initialise_worker_thread_environments(thread_t *phactor_thread)
 
     pthreads_prepare_resource_destructor(phactor_thread);
 
-    pthread_mutex_unlock(&phactor_mutex);
+    pthread_mutex_unlock(&PHACTOR_G(phactor_mutex));
 }
-
-/*
-The value.obj zend_object has changed for the zval being stored for some reason.
-It originally held a zend_object of the sending actor, and now it holds the
-actor_system object... Maybe GC?
-
-*/
 
 void process_message(task_t *task)
 {
@@ -185,7 +168,6 @@ void process_message(task_t *task)
     free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
     // zval_ptr_dtor(mail->from_actor);
     // free(mail->message);
-    // dequeue_task(task);
 }
 
 void send_message(task_t *task)
@@ -195,8 +177,6 @@ void send_message(task_t *task)
     } else {
         send_local_message(task);
     }
-
-    // dequeue_task(task);
 }
 
 void send_local_message(task_t *task)
@@ -228,11 +208,11 @@ void send_remote_message(task_t *task)
 
 void initialise_actor_system()
 {
-    tasks.task = NULL;
-    thread_count = sysconf(_SC_NPROCESSORS_ONLN);
+    PHACTOR_G(tasks).task = NULL;
+    PHACTOR_G(thread_count) = sysconf(_SC_NPROCESSORS_ONLN);
 
-    main_thread.id = (ulong) pthread_self();
-    main_thread.ls = TSRMLS_CACHE;
+    PHACTOR_G(main_thread).id = (ulong) pthread_self();
+    PHACTOR_G(main_thread).ls = TSRMLS_CACHE;
     // main_thread.thread = tsrm_thread_id();
 
     if (Z_TYPE(EG(user_exception_handler)) != IS_UNDEF) {
@@ -246,17 +226,16 @@ void initialise_actor_system()
     	}
     }
 
-    worker_threads = malloc(sizeof(thread_t) * thread_count);
+    PHACTOR_G(worker_threads) = malloc(sizeof(thread_t) * PHACTOR_G(thread_count));
 
-    for (int i = 0; i < thread_count; i += sizeof(thread_t)) {
-        pthread_mutex_init(&worker_threads[i].mutex, NULL);
-        pthread_cond_init(&worker_threads[i].cond, NULL);
-        pthread_create(&worker_threads[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &worker_threads[i]);
+    for (int i = 0; i < PHACTOR_G(thread_count); i += sizeof(thread_t)) {
+        pthread_mutex_init(&PHACTOR_G(worker_threads)[i].mutex, NULL);
+        pthread_cond_init(&PHACTOR_G(worker_threads)[i].cond, NULL);
+        pthread_create(&PHACTOR_G(worker_threads)[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &PHACTOR_G(worker_threads)[i]);
     }
 }
 
-/* {{{ zend_call_method
- Only returns the returned zval if retval_ptr != NULL */
+/* {{{ zend_call_method */
 zval* zend_call_user_method(zend_object object, const char *function_name, size_t function_name_len, zval *retval_ptr, zval *from_actor, zval *message)
 {
     int result;
@@ -266,14 +245,6 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
     zend_function *receive_function;
     zend_string *receive_function_name;
     zval params[2];
-
-    // actor_t *obj = emalloc(sizeof(actor_t));
-    // ZVAL_OBJ(obj, Z_OBJ_P(from_actor));
-    // memcpy(obj, Z_OBJ_P(from_actor), sizeof(*actor_t));
-	// zend_object_std_init(&obj->actor, Z_OBJCE_P(from_actor));
-    // ZVAL_COPY_VALUE(&params[0], obj->actor);
-
-    // ++GC_REFCOUNT(Z_OBJ_P(from_actor));
 
     ZVAL_COPY_VALUE(&params[0], from_actor);
     ZVAL_COPY_VALUE(&params[1], message);
@@ -295,43 +266,33 @@ zval* zend_call_user_method(zend_object object, const char *function_name, size_
 	fcc.function_handler = receive_function;
 
     result = zend_call_function(&fci, &fcc);
-    // zval_ptr_dtor(&fci.function_name);
-
-    // zval_ptr_dtor(&fci.params[0]);
-    // zval_ptr_dtor(&fci.params[1]);
 
     if (result == FAILURE) {
         /* error at c-level */
         obj_ce = object.ce;
 
         if (!EG(exception)) {
-            zend_error_noreturn(E_CORE_ERROR, "Couldn't execute method %s%s%s", obj_ce ? ZSTR_VAL(obj_ce->name) : "", obj_ce ? "::" : "", function_name);
+            zend_error_noreturn(
+                E_CORE_ERROR,
+                "Couldn't execute method %s%s%s",
+                obj_ce ? ZSTR_VAL(obj_ce->name) : "",
+                obj_ce ? "::" : "",
+                function_name);
         }
     }
-
-    // @todo should this (references) be allowed?
-    /* copy arguments back, they might be changed by references */
-    // if (Z_ISREF(params[0]) && !Z_ISREF_P(arg1)) {
-    //     ZVAL_COPY_VALUE(arg1, &params[0]);
-    // }
-
-    // ZVAL_COPY_VALUE(from_actor, &params[0]);
-    // ZVAL_COPY_VALUE(message, &params[1]);
-
-    // zend_fcall_info_args_clear(&fci, 1);
 
     return retval_ptr;
 }
 /* }}} */
 
-// unused for now
+// @todo unused for now
 zend_string *spl_object_hash(zend_object *obj)
 {
-    // this is for when remote actors are introduced - not needed for now
+    // @todo this is for when remote actors are introduced - not needed for now
     return strpprintf(20, "%s:%08d", "node_id_here", obj->handle);
 }
 
-// unused for now - may not be needed...
+// @todo unused for now - may not be needed...
 zend_string *spl_zval_object_hash(zval *zval_obj)
 {
     return spl_object_hash(Z_OBJ_P(zval_obj));
@@ -340,22 +301,17 @@ zend_string *spl_zval_object_hash(zval *zval_obj)
 actor_t *get_actor_from_object(zend_object *actor_obj)
 {
     pthread_mutex_lock(&phactor_actors_mutex);
-    actor_t *current_actor = actor_system.actors;
+    actor_t *current_actor = PHACTOR_G(actor_system).actors;
 
-    if (current_actor == NULL) {
-        printf("Trying to get actor hash from no actors\n"); // @debug debugging only for now (remove later and invert condition)
-    } else {
-        while (current_actor != NULL && current_actor->actor.handle != actor_obj->handle) {
-            current_actor = current_actor->next;
-        }
-
-        if (current_actor != NULL) {
-            pthread_mutex_unlock(&phactor_actors_mutex);
-            return current_actor;
-        }
+    while (current_actor != NULL && current_actor->actor.handle != actor_obj->handle) {
+        current_actor = current_actor->next;
     }
 
     pthread_mutex_unlock(&phactor_actors_mutex);
+
+    if (current_actor != NULL) {
+        return current_actor;
+    }
 
     // we did not find the actor locally, so it should be a remote actor then
     // this may be segregated into a new function, if remote actors are implemented as separate objects
@@ -385,11 +341,11 @@ actor_t *get_actor_from_zval(zval *actor_zval_obj)
 void add_new_actor(actor_t *new_actor)
 {
     pthread_mutex_lock(&phactor_actors_mutex);
-    actor_t *previous_actor = actor_system.actors;
-    actor_t *current_actor = actor_system.actors;
+    actor_t *previous_actor = PHACTOR_G(actor_system).actors;
+    actor_t *current_actor = PHACTOR_G(actor_system).actors;
 
     if (previous_actor == NULL) {
-        actor_system.actors = new_actor;
+        PHACTOR_G(actor_system).actors = new_actor;
         pthread_mutex_unlock(&phactor_actors_mutex);
         return;
     }
@@ -442,13 +398,13 @@ task_t *create_process_message_task(actor_t *actor)
 
 void enqueue_task(task_t *new_task)
 {
-    // pthread_mutex_lock(&phactor_task_mutex);
-    task_t *previous_task = tasks.task;
-    task_t *current_task = tasks.task;
+    pthread_mutex_lock(&phactor_task_mutex);
+    task_t *previous_task = PHACTOR_G(tasks).task;
+    task_t *current_task = PHACTOR_G(tasks).task;
 
     if (previous_task == NULL) {
-        tasks.task = new_task;
-        // pthread_mutex_unlock(&phactor_task_mutex);
+        PHACTOR_G(tasks).task = new_task;
+        pthread_mutex_unlock(&phactor_task_mutex);
         return;
     }
 
@@ -458,19 +414,18 @@ void enqueue_task(task_t *new_task)
     }
 
     previous_task->next_task = new_task;
-    // pthread_mutex_unlock(&phactor_task_mutex);
+    pthread_mutex_unlock(&phactor_task_mutex);
 }
 
+/* This function is only invoked in the scheduler, which already locks phactor_task_mutex */
 void dequeue_task(task_t *task)
 {
-    // pthread_mutex_lock(&phactor_task_mutex);
-    task_t *previous_task = tasks.task;
-    task_t *current_task = tasks.task;
+    task_t *previous_task = PHACTOR_G(tasks).task;
+    task_t *current_task = PHACTOR_G(tasks).task;
 
     if (previous_task == task) {
-        tasks.task = tasks.task->next_task;
+        PHACTOR_G(tasks).task = PHACTOR_G(tasks).task->next_task;
         // free(task);
-        // pthread_mutex_unlock(&phactor_task_mutex);
         return;
     }
 
@@ -482,19 +437,17 @@ void dequeue_task(task_t *task)
     previous_task->next_task = current_task->next_task;
 
     // free(task);
-
-    // pthread_mutex_unlock(&phactor_task_mutex);
 }
 
 void remove_actor(actor_t *target_actor)
 {
     pthread_mutex_lock(&phactor_actors_mutex);
 
-    actor_t *current_actor = actor_system.actors;
+    actor_t *current_actor = PHACTOR_G(actor_system).actors;
 
     if (current_actor == target_actor) {
         actor_system.actors = current_actor->next;
-        // zend_object_std_dtor(&target_actor->actor);
+        zend_object_std_dtor(&target_actor->actor);
         // free(target_actor->actor);
         // zend_string_free(target_actor->actor_ref);
 
@@ -502,7 +455,7 @@ void remove_actor(actor_t *target_actor)
         //     free(target_actor->return_value); // tmp hack to fix mem leak
         // }
 
-        // free(target_actor);
+        // efree(target_actor);
         pthread_mutex_unlock(&phactor_actors_mutex);
         return;
     }
@@ -518,7 +471,7 @@ void remove_actor(actor_t *target_actor)
             //     free(target_actor->return_value); // tmp hack to fix mem leak
             // }
 
-            // free(target_actor);
+            // efree(target_actor);
             break;
         }
 
@@ -535,10 +488,11 @@ void remove_actor_object(zval *actor)
 // @todo currently unused
 void php_actor_free_object(zend_object *obj)
 {
+    // zend_object_std_dtor(obj);return;
     actor_t *target_actor = get_actor_from_object(obj);
 
     if (target_actor == NULL) {
-        // debugging purposes only
+        // @debug purposes only - could be remote actor?
         printf("Tried to free a non-existent object\n");
         return;
     }
@@ -630,42 +584,48 @@ void receive_block(zval *actor_zval, zval *return_value)
     // return PHACTOR_ZG(current_message_value); // not the solution...
 }
 
-// force shut down the actor system (used for daemonised actor systems)
+/*
+force shut down the actor system (used for daemonised actor systems)
+No mutex is used since php_shutdown can only be set to 1 anyway...
+*/
 void force_shutdown_actor_system()
 {
-    pthread_mutex_lock(&phactor_mutex); // @todo needed? We can only set it to 1 anyway
-    php_shutdown = 1;
-    pthread_mutex_unlock(&phactor_mutex);
+    PHACTOR_G(php_shutdown) = 1;
 }
 
+/*
+No mutex since:
+ - php_shutdown can only be set to 1 anyway
+ - thread_count is not modified after being set (upon actor system startup)
+ - worker_threads is not modified after being set (upon actor system startup)
+*/
 void scheduler_blocking()
 {
-    pthread_mutex_lock(&phactor_mutex); // @todo really needed?
-    if (daemonise_actor_system == 0) {
-        php_shutdown = 1;
+    if (PHACTOR_G(daemonise_actor_system) == 0) {
+        PHACTOR_G(php_shutdown) = 1;
     }
-    pthread_mutex_unlock(&phactor_mutex);
 
     while (1) {
-        pthread_mutex_lock(&phactor_mutex);
-        if (php_shutdown == 1) {
-            pthread_mutex_unlock(&phactor_mutex);
+        if (PHACTOR_G(php_shutdown) == 1) {
             break;
         }
-        pthread_mutex_unlock(&phactor_mutex);
     }
 
-    for (int i = 0; i < thread_count; i += sizeof(thread_t)) {
-        pthread_join(worker_threads[i].thread, NULL);
+    for (int i = 0; i < PHACTOR_G(thread_count); i += sizeof(thread_t)) {
+        pthread_join(PHACTOR_G(worker_threads)[i].thread, NULL);
     }
+}
+
+void phactor_actor_write_property(zval *object, zval *member, zval *value, void **cache_slot)
+{
+    //
 }
 
 zend_object* phactor_actor_ctor(zend_class_entry *entry)
 {
     actor_t *new_actor = ecalloc(1, sizeof(actor_t));// + zend_object_properties_size(entry));
 
-    // @todo create the UUID on actor creation - this is needed for when remote
-    // actors are introduced
+    // @todo create the UUID on actor creation - for remote actors
     // new_actor->actor_ref = spl_zval_object_hash(actor_zval);
     new_actor->next = NULL;
     new_actor->mailbox = NULL;
@@ -810,7 +770,7 @@ zend_function_entry ActorSystem_methods[] = {
 
 /* {{{ */
 zend_function_entry Actor_methods[] = {
-	PHP_ME(Actor, send, Actor_send_arginfo, ZEND_ACC_PUBLIC)
+	PHP_ME(Actor, send, Actor_send_arginfo, ZEND_ACC_PROTECTED)
     PHP_ME(Actor, remove, Actor_remove_arginfo, ZEND_ACC_PUBLIC)
     PHP_ABSTRACT_ME(Actor, receive, Actor_abstract_receive_arginfo)
     PHP_ME(Actor, receiveBlock, Actor_abstract_receiveblock_arginfo, ZEND_ACC_PUBLIC)
@@ -849,6 +809,7 @@ PHP_MINIT_FUNCTION(phactor)
 	Actor_ce = zend_register_internal_class(&ce);
 	Actor_ce->ce_flags |= ZEND_ACC_ABSTRACT;
     Actor_ce->create_object = phactor_actor_ctor;
+    // Actor_ce->write_property = phactor_actor_write_property;
 
 	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
 
@@ -857,7 +818,7 @@ PHP_MINIT_FUNCTION(phactor)
     ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
 
     TSRMLS_CACHE_UPDATE();
-    phactor_instance = TSRMLS_CACHE;
+    PHACTOR_G(phactor_instance) = TSRMLS_CACHE;
 
 	return SUCCESS;
 }
@@ -877,7 +838,7 @@ PHP_RINIT_FUNCTION(phactor)
 
     zend_hash_init(&PHACTOR_ZG(resolve), 15, NULL, NULL, 0);
 
-    if (phactor_instance != TSRMLS_CACHE) {
+    if (PHACTOR_G(phactor_instance) != TSRMLS_CACHE) {
 		if (memcmp(sapi_module.name, ZEND_STRL("cli")) == SUCCESS) {
 			sapi_module.deactivate = NULL;
 		}
@@ -917,17 +878,13 @@ PHP_GINIT_FUNCTION(phactor)
     // #endif
     //
     //     pthread_mutex_init(&phactor_task_mutex, &at);
-    pthread_mutex_init(&phactor_task_mutex, NULL);
 
-    pthread_mutex_init(&task_queue_mutex, NULL);
-    pthread_mutex_init(&actor_list_mutex, NULL);
+    pthread_mutex_init(&phactor_task_mutex, NULL);
 }
 
 PHP_GSHUTDOWN_FUNCTION(phactor)
 {
     pthread_mutex_destroy(&phactor_task_mutex);
-    pthread_mutex_destroy(&task_queue_mutex);
-    pthread_mutex_destroy(&actor_list_mutex);
 }
 
 /* {{{ phactor_module_entry */
