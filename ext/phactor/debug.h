@@ -18,12 +18,12 @@
 
 /* $Id$ */
 
-#ifndef PHP_PHACTOR_DEBUG_H
-#define PHP_PHACTOR_DEBUG_H
+#ifndef DEBUG_H
+#define DEBUG_H
 
-#include "php_phactor.h"
+#include "phactor.h"
 
 void debug_tasks(task_queue_t tasks);
-void debug_actor_system(struct _actor_system actor_system);
+void debug_actor_system(actor_system_t actor_system);
 
-#endif	/* PHP_PHACTOR_DEBUG_H */
+#endif	/* DEBUG_H */

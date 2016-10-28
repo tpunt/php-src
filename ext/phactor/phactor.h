@@ -18,8 +18,8 @@
 
 /* $Id$ */
 
-#ifndef PHP_PHACTOR_H
-#define PHP_PHACTOR_H
+#ifndef PHACTOR_H
+#define PHACTOR_H
 
 #include "Zend/zend_modules.h"
 
@@ -92,36 +92,36 @@ ZEND_TSRMLS_CACHE_EXTERN()
 /* }}} */
 
 
-typedef struct _mailbox {
+typedef struct _mailbox_t {
     struct _actor_t *from_actor;
     zval *message; // @todo why the separate allocation here?
-    struct _mailbox *next_message;
-} mailbox;
+    struct _mailbox_t *next_message;
+} mailbox_t;
 
 typedef struct _actor_t {
-    zend_object actor;
-    mailbox *mailbox;
+    mailbox_t *mailbox;
     struct _actor_t *next;
     zend_string *actor_ref; // @todo make char* instead? It's going to be a fixed length
     uint16_t blocking;
     zend_execute_data *state;
-    zval *return_value;
+    // zval *return_value;
     // zval *actor_z;
+    zend_object obj;
 } actor_t;
 
-struct _actor_system {
-    zend_object actor_system;
+typedef struct _actor_system_t {
     // char system_reference[10]; // @todo needed when remote actors are introduced
     actor_t *actors;
-};
+    zend_object obj;
+} actor_system_t;
 
 typedef struct _process_message_task {
-    actor_t *actor;
+    actor_t *for_actor;
 } process_message_task;
 
 typedef struct _send_message_task {
     actor_t *to_actor;
-    mailbox *message;
+    mailbox_t *message;
 } send_message_task;
 
 typedef struct _task_t {
@@ -178,14 +178,14 @@ void initialise_worker_thread_environments(thread_t *phactor_thread);
 task_t *create_process_message_task(actor_t *actor);
 zend_object* phactor_actor_ctor(zend_class_entry *entry);
 void add_new_actor(actor_t *new_actor);
-mailbox *create_new_message(actor_t *from_actor, zval *message);
+mailbox_t *create_new_message(actor_t *from_actor, zval *message);
 void send_message(task_t *task);
 void send_local_message(task_t *task);
 void send_remote_message(task_t *task);
 void initialise_actor_system();
 /* }}} */
 
-#endif	/* PHP_PHACTOR_H */
+#endif	/* PHACTOR_H */
 
 
 /*

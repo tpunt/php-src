@@ -25,8 +25,8 @@
 #include "php.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
-#include "php_phactor.h"
-#include "php_phactor_debug.h"
+#include "phactor.h"
+#include "debug.h"
 #include "ext/standard/php_rand.h"
 #include "ext/standard/php_var.h"
 #include "main/php_main.h"
@@ -50,7 +50,7 @@ thread_t main_thread;
 pthread_mutex_t phactor_mutex;
 pthread_mutex_t phactor_task_mutex;
 pthread_mutex_t phactor_actors_mutex;
-struct _actor_system actor_system;
+actor_system_t actor_system;
 task_queue_t tasks;
 int php_shutdown = 0;
 int daemonise_actor_system = 0;
@@ -145,15 +145,15 @@ void initialise_worker_thread_environments(thread_t *phactor_thread)
 
 void process_message(task_t *task)
 {
-    mailbox *mail = task->task.pmt.actor->mailbox;
-    actor_t *actor = task->task.pmt.actor;
+    mailbox_t *mail = task->task.pmt.for_actor->mailbox;
+    actor_t *actor = task->task.pmt.for_actor;
     zval *return_value = malloc(sizeof(zval));
     zval *sender = malloc(sizeof(zval));
 
-    ZVAL_OBJ(sender, &mail->from_actor->actor);
+    ZVAL_OBJ(sender, &mail->from_actor->obj);
     actor->mailbox = actor->mailbox->next_message;
 
-    zend_call_user_method(actor->actor, return_value, sender, mail->message);
+    zend_call_user_method(actor->obj, return_value, sender, mail->message);
     // zval_ptr_dtor(mail->message);
     free(mail->message);
     free(mail);
@@ -182,8 +182,8 @@ void send_message(task_t *task)
 void send_local_message(task_t *task)
 {
     actor_t *actor = task->task.smt.to_actor;
-    mailbox *previous_message = actor->mailbox;
-    mailbox *current_message = actor->mailbox;
+    mailbox_t *previous_message = actor->mailbox;
+    mailbox_t *current_message = actor->mailbox;
 
     if (previous_message == NULL) {
         actor->mailbox = task->task.smt.message;
@@ -256,7 +256,7 @@ zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_act
     fci.params = params;
     fci.no_separation = 1;
 
-    receive_function_name = zend_string_init(ZEND_STRL("receive"), 1);
+    receive_function_name = zend_string_init(ZEND_STRL("receive"), 0);
     receive_function = zend_hash_find_ptr(&object.ce->function_table, receive_function_name);
 
     fcc.initialized = 1;
@@ -281,6 +281,8 @@ zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_act
         }
     }
 
+    zend_string_free(receive_function_name);
+
     return retval_ptr;
 }
 /* }}} */
@@ -304,7 +306,7 @@ actor_t *get_actor_from_object(zend_object *actor_obj)
     pthread_mutex_lock(&PHACTOR_G(phactor_actors_mutex));
     actor_t *current_actor = PHACTOR_G(actor_system).actors;
 
-    while (current_actor != NULL && current_actor->actor.handle != actor_obj->handle) {
+    while (current_actor != NULL && current_actor->obj.handle != actor_obj->handle) {
         current_actor = current_actor->next;
     }
 
@@ -375,9 +377,9 @@ task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zva
     return new_task;
 }
 
-mailbox *create_new_message(actor_t *from_actor, zval *message)
+mailbox_t *create_new_message(actor_t *from_actor, zval *message)
 {
-    mailbox *new_message = malloc(sizeof(mailbox));
+    mailbox_t *new_message = malloc(sizeof(mailbox_t));
     new_message->from_actor = from_actor;
     new_message->message = malloc(sizeof(zval));
     ZVAL_COPY(new_message->message, message); // @todo ZVAL_DUP instead?
@@ -390,7 +392,7 @@ task_t *create_process_message_task(actor_t *actor)
 {
     task_t *new_task = malloc(sizeof(task_t));
 
-    new_task->task.pmt.actor = actor;
+    new_task->task.pmt.for_actor = actor;
     new_task->task_type = PROCESS_MESSAGE_TASK;
     new_task->next_task = NULL;
 
@@ -448,8 +450,8 @@ void remove_actor(actor_t *target_actor)
 
     if (current_actor == target_actor) {
         actor_system.actors = current_actor->next;
-        zend_object_std_dtor(&target_actor->actor);
-        // free(target_actor->actor);
+        // zend_object_std_dtor(&target_actor->obj);
+        // free(target_actor->obj);
         // zend_string_free(target_actor->actor_ref);
 
         // if (target_actor->return_value != NULL) {
@@ -464,8 +466,8 @@ void remove_actor(actor_t *target_actor)
     while (current_actor != target_actor) {
         if (current_actor->next == target_actor) {
             current_actor->next = current_actor->next->next;
-            // zend_object_std_dtor(&target_actor->actor);
-            // free(target_actor->actor);
+            // zend_object_std_dtor(&target_actor->obj);
+            // free(target_actor->obj);
             // zend_string_free(target_actor->actor_ref);
 
             // if (target_actor->return_value != NULL) {
@@ -576,7 +578,7 @@ void receive_block(zval *actor_zval, zval *return_value)
 
     actor->blocking = 1;
     // actor->state = zend_freeze_call_stack(EG(current_execute_data));
-    actor->return_value = actor_zval; // tmp
+    // actor->return_value = actor_zval; // tmp
 
     EG(current_execute_data) = NULL;
 
@@ -618,12 +620,12 @@ void scheduler_blocking()
 void phactor_actor_write_property(zval *object, zval *member, zval *value, void **cache_slot)
 {
     //
-    rebuild_object_properties
+    // rebuild_object_properties
 }
 
 zend_object* phactor_actor_ctor(zend_class_entry *entry)
 {
-    actor_t *new_actor = ecalloc(1, sizeof(actor_t));// + zend_object_properties_size(entry));
+    actor_t *new_actor = ecalloc(1, sizeof(actor_t) + zend_object_properties_size(entry));
 
     // @todo create the UUID on actor creation - for remote actors
     // new_actor->actor_ref = spl_zval_object_hash(actor_zval);
@@ -631,30 +633,30 @@ zend_object* phactor_actor_ctor(zend_class_entry *entry)
     new_actor->mailbox = NULL;
     new_actor->blocking = 0;
     new_actor->state = NULL;
-    new_actor->return_value = NULL;
+    // new_actor->return_value = NULL;
 
-    zend_object_std_init(&new_actor->actor, entry);
-	// object_properties_init(&new_actor->actor, entry);
+    zend_object_std_init(&new_actor->obj, entry);
+	object_properties_init(&new_actor->obj, entry);
 
-    new_actor->actor.handlers = &phactor_actor_handlers;
+    new_actor->obj.handlers = &phactor_actor_handlers;
 
     add_new_actor(new_actor);
 
-	return &new_actor->actor;
+	return &new_actor->obj;
 }
 
 zend_object* phactor_actor_system_ctor(zend_class_entry *entry)
 {
-    struct _actor_system *new_actor_system = ecalloc(1, sizeof(struct _actor_system));// + zend_object_properties_size(entry));
+    actor_system_t *new_actor_system = ecalloc(1, sizeof(actor_system_t) + zend_object_properties_size(entry));
 
     // @todo create the UUID on actor creation - this is needed for remote actor systems only
 
-    zend_object_std_init(&new_actor_system->actor_system, entry);
-	// object_properties_init(&new_actor->actor, entry);
+    zend_object_std_init(&new_actor_system->obj, entry);
+	object_properties_init(&new_actor_system->obj, entry);
 
-    new_actor_system->actor_system.handlers = &phactor_actor_system_handlers;
+    new_actor_system->obj.handlers = &phactor_actor_system_handlers;
 
-	return &new_actor_system->actor_system;
+	return &new_actor_system->obj;
 }
 
 
@@ -789,7 +791,10 @@ void phactor_globals_dtor(zend_phactor_globals *phactor_globals)
 
 }
 
-
+HashTable *phactor_debug_handler(zval *object, int *is_temp)
+{
+    return NULL;
+}
 
 /* {{{ PHP_MINIT_FUNCTION */
 PHP_MINIT_FUNCTION(phactor)
@@ -814,6 +819,8 @@ PHP_MINIT_FUNCTION(phactor)
 	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
 
     phactor_actor_handlers.dtor_obj = php_actor_free_object;
+    phactor_actor_handlers.get_debug_info = NULL;//phactor_debug_handler;
+    phactor_actor_handlers.get_properties = NULL;
 
     ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
 

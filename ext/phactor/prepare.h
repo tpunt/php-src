@@ -18,7 +18,7 @@
 #ifndef HAVE_PTHREADS_PREPARE_H
 #define HAVE_PTHREADS_PREPARE_H
 
-#include "php_phactor.h"
+#include "phactor.h"
 
 void pthreads_prepare_exception_handler(thread_t *thread);
 void pthreads_prepare_includes(thread_t *thread);
