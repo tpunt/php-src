@@ -617,48 +617,6 @@ void scheduler_blocking()
     }
 }
 
-void phactor_actor_write_property(zval *object, zval *member, zval *value, void **cache_slot)
-{
-    //
-    // rebuild_object_properties
-}
-
-zend_object* phactor_actor_ctor(zend_class_entry *entry)
-{
-    actor_t *new_actor = ecalloc(1, sizeof(actor_t) + zend_object_properties_size(entry));
-
-    // @todo create the UUID on actor creation - for remote actors
-    // new_actor->actor_ref = spl_zval_object_hash(actor_zval);
-    new_actor->next = NULL;
-    new_actor->mailbox = NULL;
-    new_actor->blocking = 0;
-    new_actor->state = NULL;
-    // new_actor->return_value = NULL;
-
-    zend_object_std_init(&new_actor->obj, entry);
-	object_properties_init(&new_actor->obj, entry);
-
-    new_actor->obj.handlers = &phactor_actor_handlers;
-
-    add_new_actor(new_actor);
-
-	return &new_actor->obj;
-}
-
-zend_object* phactor_actor_system_ctor(zend_class_entry *entry)
-{
-    actor_system_t *new_actor_system = ecalloc(1, sizeof(actor_system_t) + zend_object_properties_size(entry));
-
-    // @todo create the UUID on actor creation - this is needed for remote actor systems only
-
-    zend_object_std_init(&new_actor_system->obj, entry);
-	object_properties_init(&new_actor_system->obj, entry);
-
-    new_actor_system->obj.handlers = &phactor_actor_system_handlers;
-
-	return &new_actor_system->obj;
-}
-
 
 
 ZEND_BEGIN_ARG_INFO(ActorSystem_construct_arginfo, 0)
@@ -781,6 +739,48 @@ zend_function_entry Actor_methods[] = {
 
 
 
+void phactor_actor_write_property(zval *object, zval *member, zval *value, void **cache_slot)
+{
+    //
+    // rebuild_object_properties
+}
+
+zend_object* phactor_actor_ctor(zend_class_entry *entry)
+{
+    actor_t *new_actor = ecalloc(1, sizeof(actor_t) + zend_object_properties_size(entry));
+
+    // @todo create the UUID on actor creation - for remote actors
+    // new_actor->actor_ref = spl_zval_object_hash(actor_zval);
+    new_actor->next = NULL;
+    new_actor->mailbox = NULL;
+    new_actor->blocking = 0;
+    new_actor->state = NULL;
+    // new_actor->return_value = NULL;
+
+    zend_object_std_init(&new_actor->obj, entry);
+    object_properties_init(&new_actor->obj, entry);
+
+    new_actor->obj.handlers = &phactor_actor_handlers;
+
+    add_new_actor(new_actor);
+
+	return &new_actor->obj;
+}
+
+zend_object* phactor_actor_system_ctor(zend_class_entry *entry)
+{
+    actor_system_t *new_actor_system = ecalloc(1, sizeof(actor_system_t) + zend_object_properties_size(entry));
+
+    // @todo create the UUID on actor creation - this is needed for remote actor systems only
+
+    zend_object_std_init(&new_actor_system->obj, entry);
+	object_properties_init(&new_actor_system->obj, entry);
+
+    new_actor_system->obj.handlers = &phactor_actor_system_handlers;
+
+	return &new_actor_system->obj;
+}
+
 void phactor_globals_ctor(zend_phactor_globals *phactor_globals)
 {
     phactor_globals->resources = NULL;
@@ -791,9 +791,15 @@ void phactor_globals_dtor(zend_phactor_globals *phactor_globals)
 
 }
 
-HashTable *phactor_debug_handler(zval *object, int *is_temp)
+HashTable *phactor_actor_get_debug_info(zval *object, int *is_temp)
 {
+    // return zend_std_get_properties(object);
     return NULL;
+}
+
+HashTable *phactor_actor_get_properties(zval *object)
+{
+    return zend_std_get_properties(object);
 }
 
 /* {{{ PHP_MINIT_FUNCTION */
@@ -809,6 +815,8 @@ PHP_MINIT_FUNCTION(phactor)
 
 	memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
 
+    phactor_actor_system_handlers.offset = XtOffsetOf(actor_system_t, obj);
+
     /* Actor Class */
 	INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);
 	Actor_ce = zend_register_internal_class(&ce);
@@ -818,9 +826,10 @@ PHP_MINIT_FUNCTION(phactor)
 
 	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
 
+    phactor_actor_handlers.offset = XtOffsetOf(actor_t, obj);
     phactor_actor_handlers.dtor_obj = php_actor_free_object;
-    phactor_actor_handlers.get_debug_info = NULL;//phactor_debug_handler;
-    phactor_actor_handlers.get_properties = NULL;
+    phactor_actor_handlers.get_debug_info = phactor_actor_get_debug_info;
+    phactor_actor_handlers.get_properties = phactor_actor_get_properties;
 
     ZEND_INIT_MODULE_GLOBALS(phactor, phactor_globals_ctor, NULL);
 
