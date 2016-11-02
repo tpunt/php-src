@@ -21,7 +21,7 @@
 #ifndef DEBUG_H
 #define DEBUG_H
 
-#include "phactor.h"
+#include "php_phactor.h"
 
 void debug_tasks(task_queue_t tasks);
 void debug_actor_system(actor_system_t actor_system);

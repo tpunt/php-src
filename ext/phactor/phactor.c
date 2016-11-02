@@ -25,7 +25,7 @@
 #include "php.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
-#include "phactor.h"
+#include "php_phactor.h"
 #include "debug.h"
 #include "ext/standard/php_rand.h"
 #include "ext/standard/php_var.h"
@@ -124,19 +124,19 @@ void initialise_worker_thread_environments(thread_t *phactor_thread)
 {
     pthread_mutex_lock(&PHACTOR_G(phactor_mutex));
     // taken from pthreads...
-	pthreads_prepare_sapi(phactor_thread);
+    pthreads_prepare_sapi(phactor_thread);
 
-	pthreads_prepare_ini(phactor_thread);
+    pthreads_prepare_ini(phactor_thread);
 
-	pthreads_prepare_constants(phactor_thread);
+    pthreads_prepare_constants(phactor_thread);
 
-	pthreads_prepare_functions(phactor_thread);
+    pthreads_prepare_functions(phactor_thread);
 
-	pthreads_prepare_classes(phactor_thread);
+    pthreads_prepare_classes(phactor_thread);
 
-	pthreads_prepare_includes(phactor_thread);
+    pthreads_prepare_includes(phactor_thread);
 
-	pthreads_prepare_exception_handler(phactor_thread);
+    pthreads_prepare_exception_handler(phactor_thread);
 
     pthreads_prepare_resource_destructor(phactor_thread);
 
@@ -228,14 +228,13 @@ void initialise_actor_system()
 
     PHACTOR_G(worker_threads) = malloc(sizeof(thread_t) * PHACTOR_G(thread_count));
 
-    for (int i = 0; i < PHACTOR_G(thread_count); i += sizeof(thread_t)) {
+    for (int i = 0; i < PHACTOR_G(thread_count); ++i) {
         pthread_mutex_init(&PHACTOR_G(worker_threads)[i].mutex, NULL);
         pthread_cond_init(&PHACTOR_G(worker_threads)[i].cond, NULL);
-        pthread_create(&PHACTOR_G(worker_threads)[i].thread, NULL, (void* (*) (void*)) worker_function, (void *) &PHACTOR_G(worker_threads)[i]);
+        pthread_create(&PHACTOR_G(worker_threads)[i].thread, NULL, (void *) worker_function, &PHACTOR_G(worker_threads)[i]);
     }
 }
 
-/* {{{ zend_call_method */
 zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_actor, zval *message)
 {
     int result;
@@ -285,7 +284,6 @@ zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_act
 
     return retval_ptr;
 }
-/* }}} */
 
 // @todo unused for now
 zend_string *spl_object_hash(zend_object *obj)
@@ -615,6 +613,8 @@ void scheduler_blocking()
     for (int i = 0; i < PHACTOR_G(thread_count); i += sizeof(thread_t)) {
         pthread_join(PHACTOR_G(worker_threads)[i].thread, NULL);
     }
+
+    free(worker_threads);
 }
 
 

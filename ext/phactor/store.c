@@ -18,7 +18,7 @@
 #ifndef HAVE_PTHREADS_STORE
 #define HAVE_PTHREADS_STORE
 
-#include "copy.h"
+#include "prepare.h"
 #include "php_phactor.h"
 
 #define IS_CLOSURE (IS_PTR + 1)
@@ -333,7 +333,7 @@ static int pthreads_store_convert(pthreads_storage *storage, zval *pzval){
 			actor_t *actor = storage->data;
 
 			if (pthreads_check_opline_ex(EG(current_execute_data), 1, ZEND_CAST, IS_OBJECT)) {
-				ZVAL_OBJ(pzval, &actor->actor);
+				ZVAL_OBJ(pzval, &actor->obj);
 				Z_ADDREF_P(pzval);
 				break;
 			}

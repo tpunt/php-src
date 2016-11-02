@@ -19,19 +19,12 @@
 #define HAVE_PTHREADS_PREPARE
 
 #include "prepare.h"
-#include "copy.h"
-#include "php_phactor.h"
 
 /* {{{ */
 static zend_trait_alias * pthreads_preparation_copy_trait_alias(thread_t* thread, zend_trait_alias *alias);
 static zend_trait_precedence * pthreads_preparation_copy_trait_precedence(thread_t* thread, zend_trait_precedence *precedence);
 static zend_trait_method_reference * pthreads_preparation_copy_trait_method_reference(thread_t* thread, zend_trait_method_reference *reference);
 static void pthreads_prepared_resource_dtor(zval *zv); /* }}} */
-
-/*
-Copy class entries
-
-*/
 
 /* {{{ */
 static zend_class_entry* pthreads_copy_entry(thread_t* thread, zend_class_entry *candidate) {
@@ -548,20 +541,9 @@ inline void pthreads_prepare_classes(thread_t *thread) {
 
 	ZEND_HASH_FOREACH_STR_KEY_PTR(PHACTOR_CG(main_thread.ls, class_table), name, entry) {
 		if (entry->type == ZEND_USER_CLASS) {
-			zend_string *lookup;
-
 			if (zend_hash_exists(PHACTOR_CG(thread->ls, class_table), name)) {
 				continue;
 			}
-
-			lookup = zend_string_tolower(name);
-
-			if (zend_hash_exists(PHACTOR_CG(thread->ls, class_table), lookup)) {
-				zend_string_release(lookup);
-				continue;
-			}
-
-			zend_string_release(lookup);
 
 			if (!(prepared = pthreads_prepared_entry(thread, entry))) {
 				continue;

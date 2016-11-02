@@ -85,10 +85,10 @@ ZEND_TSRMLS_CACHE_EXTERN()
 #define PROCESS_MESSAGE_TASK 1
 #define SEND_MESSAGE_TASK 2
 
-#define PHACTOR_FETCH_CTX(ls, id, type, element) (((type) (*((void ***) ls))[TSRM_UNSHUFFLE_RSRC_ID(id)])->element)
-#define PHACTOR_EG(ls, v) PHACTOR_FETCH_CTX(ls, executor_globals_id, zend_executor_globals*, v)
-#define PHACTOR_CG(ls, v) PHACTOR_FETCH_CTX(ls, compiler_globals_id, zend_compiler_globals*, v)
-#define PHACTOR_SG(ls, v) PHACTOR_FETCH_CTX(ls, sapi_globals_id, sapi_globals_struct*, v)
+#define PHACTOR_CTX(ls, id, type, element) (((type) (*((void ***) ls))[TSRM_UNSHUFFLE_RSRC_ID(id)])->element)
+#define PHACTOR_EG(ls, v) PHACTOR_CTX(ls, executor_globals_id, zend_executor_globals*, v)
+#define PHACTOR_CG(ls, v) PHACTOR_CTX(ls, compiler_globals_id, zend_compiler_globals*, v)
+#define PHACTOR_SG(ls, v) PHACTOR_CTX(ls, sapi_globals_id, sapi_globals_struct*, v)
 /* }}} */
 
 
@@ -158,6 +158,7 @@ ZEND_BEGIN_MODULE_GLOBALS(phactor)
     zval this; //
     HashTable *resources; // used in store.c::pthreads_resources_keep
     HashTable resolve; // used in prepare.c::pthreads_copy_entry
+    HashTable symbol_tracker;
 ZEND_END_MODULE_GLOBALS(phactor)
 
 // #include "copy.h"
