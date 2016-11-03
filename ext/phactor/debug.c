@@ -24,7 +24,7 @@
 
 #include "php.h"
 #include "debug.h"
-#include "phactor.h"
+#include "php_phactor.h"
 
 void debug_tasks(task_queue_t tasks)
 {
@@ -36,12 +36,14 @@ void debug_tasks(task_queue_t tasks)
     while (task != NULL) {
         ++task_count;
 
-        printf("%d) Task: %p (%s)", task_count, task, task->task_type == 1 ? "PMT" : "SMT");
+        printf("%d) [%s] Task: %p", task_count, task->task_type == 1 ? "PMT" : "SMT", task);
 
         if (task->task_type == 1) {
-            printf(", Actor: %p", task->task.pmt.for_actor);
+            printf(", To Actor: %p, Message: {from_actor = %p, message = %p}",
+                task->task.pmt.for_actor, task->task.pmt.for_actor->mailbox->from_actor, task->task.pmt.for_actor->mailbox->message);
         } else {
-            printf(", Actor: %p, Message zval: %p", task->task.pmt.for_actor, task->task.smt.message->message);
+            printf(", To Actor: %p, Message: {from_actor = %p, message = %p}",
+            task->task.smt.to_actor, task->task.smt.message->from_actor, task->task.smt.message->message);
         }
 
         printf("\n");

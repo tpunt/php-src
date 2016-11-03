@@ -91,6 +91,7 @@ void *worker_function(thread_t *phactor_thread)
             pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
             continue;
         }
+        debug_tasks(PHACTOR_G(tasks));
 
         task_t *current_task = dequeue_task();
 
@@ -112,29 +113,6 @@ void *worker_function(thread_t *phactor_thread)
     pthread_exit(NULL);
 }
 
-void initialise_worker_thread_environments(thread_t *phactor_thread)
-{
-    pthread_mutex_lock(&PHACTOR_G(phactor_mutex));
-    // taken from pthreads...
-    pthreads_prepare_sapi(phactor_thread);
-
-    pthreads_prepare_ini(phactor_thread);
-
-    pthreads_prepare_constants(phactor_thread);
-
-    pthreads_prepare_functions(phactor_thread);
-
-    pthreads_prepare_classes(phactor_thread);
-
-    pthreads_prepare_includes(phactor_thread);
-
-    pthreads_prepare_exception_handler(phactor_thread);
-
-    pthreads_prepare_resource_destructor(phactor_thread);
-
-    pthread_mutex_unlock(&PHACTOR_G(phactor_mutex));
-}
-
 void process_message(task_t *task)
 {
     mailbox_t *mail = task->task.pmt.for_actor->mailbox;
@@ -145,9 +123,8 @@ void process_message(task_t *task)
     ZVAL_OBJ(sender, &mail->from_actor->obj);
     actor->mailbox = actor->mailbox->next_message;
 
-    zend_call_user_method(actor->obj, return_value, sender, mail->message);
+    // zend_call_user_method(actor->obj, return_value, sender, mail->message);
     // zval_ptr_dtor(mail->message);
-    free(mail->message);
     free(mail);
 
     // zval_ptr_dtor(sender);
@@ -200,33 +177,70 @@ void send_remote_message(task_t *task)
     assert(0);
 }
 
-void initialise_actor_system()
+task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zval *message)
 {
-    PHACTOR_G(tasks).task = NULL;
-    PHACTOR_G(thread_count) = 1;//sysconf(_SC_NPROCESSORS_ONLN);
+    actor_t *to_actor = get_actor_from_zval(to_actor_zval);
+    actor_t *from_actor = get_actor_from_zval(from_actor_zval);
+    task_t *new_task = malloc(sizeof(task_t));
 
-    PHACTOR_G(main_thread).id = (ulong) pthread_self();
-    PHACTOR_G(main_thread).ls = TSRMLS_CACHE;
-    // main_thread.thread = tsrm_thread_id();
+    new_task->task.smt.to_actor = to_actor;
+    new_task->task.smt.message = create_new_message(from_actor, message);
+    new_task->task_type = SEND_MESSAGE_TASK;
+    new_task->next_task = NULL;
 
-    if (Z_TYPE(EG(user_exception_handler)) != IS_UNDEF) {
-        if (Z_TYPE_P(&EG(user_exception_handler)) == IS_OBJECT) {
-    		rebuild_object_properties(Z_OBJ_P(&EG(user_exception_handler)));
-    	} else if (Z_TYPE_P(&EG(user_exception_handler)) == IS_ARRAY) {
-    		zval *object = zend_hash_index_find(Z_ARRVAL_P(&EG(user_exception_handler)), 0);
-    		if (object && Z_TYPE_P(object) == IS_OBJECT) {
-    			rebuild_object_properties(Z_OBJ_P(object));
-    		}
-    	}
+    return new_task;
+}
+
+mailbox_t *create_new_message(actor_t *from_actor, zval *message)
+{
+    mailbox_t *new_message = malloc(sizeof(mailbox_t));
+
+    new_message->from_actor = from_actor;
+    new_message->message = malloc(sizeof(zval));
+    ZVAL_COPY(new_message->message, message); // @todo ZVAL_DUP instead?
+    new_message->next_message = NULL;
+
+    return new_message;
+}
+
+task_t *create_process_message_task(actor_t *actor)
+{
+    task_t *new_task = malloc(sizeof(task_t));
+
+    new_task->task.pmt.for_actor = actor;
+    new_task->task_type = PROCESS_MESSAGE_TASK;
+    new_task->next_task = NULL;
+
+    return new_task;
+}
+
+void enqueue_task(task_t *new_task)
+{
+    pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
+    task_t *current_task = PHACTOR_G(tasks).task;
+
+    if (current_task == NULL) {
+        PHACTOR_G(tasks).task = new_task;
+        pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
+        return;
     }
 
-    PHACTOR_G(worker_threads) = malloc(sizeof(thread_t) * PHACTOR_G(thread_count));
-
-    for (int i = 0; i < PHACTOR_G(thread_count); ++i) {
-        pthread_mutex_init(&PHACTOR_G(worker_threads)[i].mutex, NULL);
-        pthread_cond_init(&PHACTOR_G(worker_threads)[i].cond, NULL);
-        pthread_create(&PHACTOR_G(worker_threads)[i].thread, NULL, (void *) worker_function, &PHACTOR_G(worker_threads)[i]);
+    while (current_task->next_task != NULL) {
+        current_task = current_task->next_task;
     }
+
+    current_task->next_task = new_task;
+    pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
+}
+
+/* This function is only invoked in the scheduler, which already locks phactor_task_mutex */
+static task_t *dequeue_task(void)
+{
+    task_t *task = PHACTOR_G(tasks).task;
+
+    PHACTOR_G(tasks).task = task->next_task;
+
+    return task;
 }
 
 zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_actor, zval *message)
@@ -277,6 +291,29 @@ zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_act
     zend_string_free(receive_function_name);
 
     return retval_ptr;
+}
+
+void initialise_worker_thread_environments(thread_t *phactor_thread)
+{
+    pthread_mutex_lock(&PHACTOR_G(phactor_mutex));
+    // taken from pthreads...
+    pthreads_prepare_sapi(phactor_thread);
+
+    pthreads_prepare_ini(phactor_thread);
+
+    pthreads_prepare_constants(phactor_thread);
+
+    pthreads_prepare_functions(phactor_thread);
+
+    pthreads_prepare_classes(phactor_thread);
+
+    pthreads_prepare_includes(phactor_thread);
+
+    pthreads_prepare_exception_handler(phactor_thread);
+
+    pthreads_prepare_resource_destructor(phactor_thread);
+
+    pthread_mutex_unlock(&PHACTOR_G(phactor_mutex));
 }
 
 // @todo unused for now
@@ -354,69 +391,33 @@ void add_new_actor(actor_t *new_actor)
     pthread_mutex_unlock(&PHACTOR_G(phactor_actors_mutex));
 }
 
-task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zval *message)
+void initialise_actor_system()
 {
-    actor_t *to_actor = get_actor_from_zval(to_actor_zval);
-    actor_t *from_actor = get_actor_from_zval(from_actor_zval);
-    task_t *new_task = malloc(sizeof(task_t));
+    PHACTOR_G(tasks).task = NULL;
+    PHACTOR_G(thread_count) = 1;//sysconf(_SC_NPROCESSORS_ONLN);
 
-    new_task->task.smt.to_actor = to_actor;
-    new_task->task.smt.message = create_new_message(from_actor, message);
-    new_task->task_type = SEND_MESSAGE_TASK;
-    new_task->next_task = NULL;
+    PHACTOR_G(main_thread).id = (ulong) pthread_self();
+    PHACTOR_G(main_thread).ls = TSRMLS_CACHE;
+    // main_thread.thread = tsrm_thread_id();
 
-    return new_task;
-}
-
-mailbox_t *create_new_message(actor_t *from_actor, zval *message)
-{
-    mailbox_t *new_message = malloc(sizeof(mailbox_t));
-    new_message->from_actor = from_actor;
-    new_message->message = malloc(sizeof(zval));
-    ZVAL_COPY(new_message->message, message); // @todo ZVAL_DUP instead?
-    new_message->next_message = NULL;
-
-    return new_message;
-}
-
-task_t *create_process_message_task(actor_t *actor)
-{
-    task_t *new_task = malloc(sizeof(task_t));
-
-    new_task->task.pmt.for_actor = actor;
-    new_task->task_type = PROCESS_MESSAGE_TASK;
-    new_task->next_task = NULL;
-
-    return new_task;
-}
-
-void enqueue_task(task_t *new_task)
-{
-    pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
-    task_t *current_task = PHACTOR_G(tasks).task;
-
-    if (current_task == NULL) {
-        PHACTOR_G(tasks).task = new_task;
-        pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
-        return;
+    if (Z_TYPE(EG(user_exception_handler)) != IS_UNDEF) {
+        if (Z_TYPE_P(&EG(user_exception_handler)) == IS_OBJECT) {
+    		rebuild_object_properties(Z_OBJ_P(&EG(user_exception_handler)));
+    	} else if (Z_TYPE_P(&EG(user_exception_handler)) == IS_ARRAY) {
+    		zval *object = zend_hash_index_find(Z_ARRVAL_P(&EG(user_exception_handler)), 0);
+    		if (object && Z_TYPE_P(object) == IS_OBJECT) {
+    			rebuild_object_properties(Z_OBJ_P(object));
+    		}
+    	}
     }
 
-    while (current_task->next_task != NULL) {
-        current_task = current_task->next_task;
+    PHACTOR_G(worker_threads) = malloc(sizeof(thread_t) * PHACTOR_G(thread_count));
+
+    for (int i = 0; i < PHACTOR_G(thread_count); ++i) {
+        pthread_mutex_init(&PHACTOR_G(worker_threads)[i].mutex, NULL);
+        pthread_cond_init(&PHACTOR_G(worker_threads)[i].cond, NULL);
+        pthread_create(&PHACTOR_G(worker_threads)[i].thread, NULL, (void *) worker_function, &PHACTOR_G(worker_threads)[i]);
     }
-
-    current_task->next_task = new_task;
-    pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
-}
-
-/* This function is only invoked in the scheduler, which already locks phactor_task_mutex */
-static task_t *dequeue_task(void)
-{
-    task_t *task = PHACTOR_G(tasks).task;
-
-    PHACTOR_G(tasks).task = task->next_task;
-
-    return task;
 }
 
 void remove_actor(actor_t *target_actor)

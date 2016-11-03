@@ -94,7 +94,7 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 typedef struct _mailbox_t {
     struct _actor_t *from_actor;
-    zval *message; // @todo why the separate allocation here?
+    zval *message;
     struct _mailbox_t *next_message;
 } mailbox_t;
 
