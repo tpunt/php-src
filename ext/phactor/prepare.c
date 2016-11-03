@@ -370,8 +370,11 @@ zend_class_entry* pthreads_prepared_entry(thread_t* thread, zend_class_entry *ca
 	zend_class_entry *prepared = NULL;
 	zend_string *lookup = NULL;
 
-	if (!candidate ||
-		(prepared = zend_hash_find_ptr(EG(class_table), candidate->name))) {
+	if (!candidate) {
+        return NULL;
+    }
+
+    if ((prepared = zend_hash_find_ptr(EG(class_table), candidate->name))) {
 		return prepared;
 	}
 
@@ -533,36 +536,16 @@ inline void pthreads_prepare_functions(thread_t *thread) {
 
 /* {{{ */
 inline void pthreads_prepare_classes(thread_t *thread) {
-	zend_class_entry *entry, *prepared;
+	zend_class_entry *entry;
 	zend_string *name;
-	HashTable inherited;
-
-	zend_hash_init(&inherited, zend_hash_num_elements(PHACTOR_CG(main_thread.ls, class_table)), NULL, NULL, 0);
 
 	ZEND_HASH_FOREACH_STR_KEY_PTR(PHACTOR_CG(main_thread.ls, class_table), name, entry) {
 		if (entry->type == ZEND_USER_CLASS) {
-			if (zend_hash_exists(PHACTOR_CG(thread->ls, class_table), name)) {
-				continue;
-			}
-
-			if (!(prepared = pthreads_prepared_entry(thread, entry))) {
-				continue;
-			}
-
-			zend_hash_next_index_insert_ptr(&inherited, prepared);
-		}
-	} ZEND_HASH_FOREACH_END();
-
-	ZEND_HASH_FOREACH_PTR(&inherited, entry) {
-		if (entry->parent) {
-			prepared = zend_hash_index_find_ptr(&PHACTOR_ZG(resolve), (zend_ulong) entry->parent);
-			if (prepared) {
-				entry->parent = prepared;
+			if (!zend_hash_exists(PHACTOR_CG(thread->ls, class_table), name)) {
+				pthreads_prepared_entry(thread, entry);
 			}
 		}
 	} ZEND_HASH_FOREACH_END();
-
-	zend_hash_destroy(&inherited);
 } /* }}} */
 
 /* {{{ */

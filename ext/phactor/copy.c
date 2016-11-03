@@ -2,23 +2,16 @@
 
 void copy_execution_context(void)
 {
-    EG(class_table) = copy_ces(PHACTOR_EG(main_thread.ls, class_table));
+    copy_ces(PHACTOR_EG(main_thread.ls, class_table));
 }
 
-HashTable *copy_ces(HashTable *class_table)
+void copy_ces(HashTable *old_ces) // pass in EG(class_table) instead?
 {
-    HashTable *classes = malloc(sizeof(HashTable));
     zend_class_entry *ce;
 
-    zend_hash_init(classes, class_table->nTableSize, NULL, 0);
-
-    ZEND_HASH_FOREACH_PTR(class_table, ce) {
-        if (ce->type == ZEND_USER_CLASS) {
-            zend_hash_add(classes, ce->name, copy_ce(ce));
-        }
+    ZEND_HASH_FOREACH_PTR(old_ces, ce) {
+        zend_hash_update_ptr(EG(class_table), ce->name, copy_ce(ce));
     } ZEND_HASH_FOREACH_END();
-
-    return classes;
 }
 
 zend_class_entry *copy_ce(zend_class_entry *old_ce)
@@ -131,52 +124,74 @@ zend_class_entry *create_new_ce(void)
     return new_ce;
 }
 
-zend_trait_precedence **copy_trait_precedences(zend_trait_precedence **trait_precedences)
+zend_trait_method_reference *copy_trait_method_reference(zend_trait_method_reference *method_reference)
 {
-    if (trait_precedences == NULL) {
-        return NULL;
+    zend_trait_method_reference *new_method_reference = malloc(sizeof(zend_trait_method_reference));
+
+    new_method_reference->method_name = zend_string_dup(method_reference->method_name, 0);
+    new_method_reference->ce = copy_ce(method_reference->ce);
+
+    if (method_reference->class_name) {
+        new_method_reference->class_name = zend_string_dup(method_reference->class_name, 0);
+    } else {
+        new_method_reference->class_name = NULL;
     }
 
-    uint32_t count = 0;
-
-    while (trait_precedences[++count]);
-
-    zend_trait_precedence **new_tp = malloc(sizeof(zend_trait_precedence *) * count);
-
-    new_tp->trait_precedences[--count] = NULL;
-
-    while (--count > -1) {
-        new_tp->trait_precedences[count] = malloc(sizeof(zend_trait_precedence));
-        memcpy(new_tp->trait_precedences[count], trait_aliases[count], sizeof(zend_trait_precedence));
-        new_tp->trait_precedences[count]->trait_method = malloc(sizeof(zend_trait_method_reference));
-        memcpy(new_tp->trait_precedences[count]->trait_method, trait_aliases[count]->trait_method, sizeof(zend_trait_method_reference));
-    }
-
-    return new_tp;
+    return new_method_reference;
 }
 
-zend_trait_alias **copy_trait_aliases(zend_trait_alias **trait_aliases)
+zend_trait_precedence **copy_trait_precedences(zend_trait_precedence **old_tps)
 {
-    if (trait_aliases == NULL) {
+    if (old_tps == NULL) {
         return NULL;
     }
 
     uint32_t count = 0;
 
-    while (trait_aliases[++count]);
+    while (old_tps[++count]);
 
-    zend_trait_alias **new_ta = malloc(sizeof(zend_trait_alias *) * count);
+    zend_trait_precedence **new_tps = malloc(sizeof(zend_trait_precedence *) * count);
 
-    new_ta->trait_aliases[--count] = NULL;
+    new_tps[--count] = NULL;
 
     while (--count > -1) {
-        new_ta->trait_aliases[count] = malloc(sizeof(zend_trait_alias));
-        memcpy(new_ce->trait_aliases[count], trait_aliases[count], sizeof(zend_trait_alias));
-        new_ta->trait_aliases[count]->trait_method = malloc(sizeof(zend_trait_method_reference));
-        memcpy(new_ta->trait_aliases[count]->trait_method, trait_aliases[count]->trait_method, sizeof(zend_trait_method_reference));
+        new_tps[count] = malloc(sizeof(zend_trait_precedence));
+        new_tps[count]->trait_method = copy_trait_method_reference(old_tps[count]);
+
+        if (old_tp->exclude_from_classes) {
+            new_tps[count]->exclude_from_classes = malloc(sizeof(*old_tps[count]->exclude_from_classes));
+            new_tps[count]->exclude_from_classes->ce = copy_ce(old_tps[count]->exclude_from_classes->ce);
+            new_tps[count]->exclude_from_classes->class_name = zend_string_dup(old_tps[count]->exclude_from_classes->class_name, 0);
+        } else {
+            new_tps[count]->exclude_from_classes = NULL;
+        }
     }
 
-    return new_ta;
+    return new_tps;
+}
+
+zend_trait_alias **copy_trait_aliases(zend_trait_alias **old_tas)
+{
+    if (old_tas == NULL) {
+        return NULL;
+    }
+
+    uint32_t count = 0;
+
+    while (old_tas[++count]);
+
+    zend_trait_alias **new_tas = malloc(sizeof(zend_trait_alias *) * count);
+
+    new_tas[--count] = NULL;
+
+    while (--count > -1) {
+        new_tas[count] = malloc(sizeof(zend_trait_alias));
+        new_tas[count]->trait_method = copy_trait_method_reference(old_tas[count]->trait_method);
+        new_tas[count]->alias = old_tas[count]->alias ? zend_string_dup(old_tas[count]->alias, 0) : NULL;
+        new_tas[count]->modifiers = old_tas[count]->modifiers;
+    }
+
+    return new_tas;
 }
 
 zend_class_entry **copy_traits(zend_class_entry **old_traits, uint32_t num_traits)
@@ -200,7 +215,7 @@ zend_class_entry **copy_interfaces(zend_class_entry **old_interfaces, uint32_t n
 
     zend_class_entry **new_interfaces = malloc(sizeof(zend_class_entry *) * num_interfaces);
 
-    for (uint32_t i = 0; i < num_traits; ++i) {
+    for (uint32_t i = 0; i < num_interfaces; ++i) {
         new_interfaces[i] = copy_ce(old_interfaces[i]);
     }
 

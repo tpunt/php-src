@@ -167,7 +167,7 @@ ZEND_END_MODULE_GLOBALS(phactor)
 void *scheduler();
 void process_message(task_t *task);
 void enqueue_task(task_t *task);
-void dequeue_task(task_t *task);
+static task_t *dequeue_task(void);
 zend_string *spl_object_hash(zend_object *obj);
 zend_string *spl_zval_object_hash(zval *zval_obj);
 zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_actor, zval *message);

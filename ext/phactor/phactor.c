@@ -82,23 +82,17 @@ void *worker_function(thread_t *phactor_thread)
 
     while (1) {
         pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
-        task_t *current_task = PHACTOR_G(tasks).task;
-        task_t *next_task;
 
-        if (PHACTOR_G(php_shutdown) && PHACTOR_G(tasks).task == NULL) {
-            pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
-            break;
-        }
-
-        if (current_task == NULL) {
-            current_task = PHACTOR_G(tasks).task;
+        if (PHACTOR_G(tasks).task == NULL) {
+            if (PHACTOR_G(php_shutdown)) {
+                pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
+                break;
+            }
             pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
             continue;
         }
 
-        next_task = current_task->next_task;
-
-        dequeue_task(current_task);
+        task_t *current_task = dequeue_task();
 
         pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
 
@@ -112,8 +106,6 @@ void *worker_function(thread_t *phactor_thread)
         }
 
         free(current_task);
-
-        current_task = next_task;
     }
 
     pthreads_prepared_shutdown(phactor_thread);
@@ -179,21 +171,23 @@ void send_message(task_t *task)
     }
 }
 
+/*
+Add the message (containing the from_actor and message) to the to_actor's mailbox.
+Enqueue the to_actor as a new task to have its mailbox processed.
+*/
 void send_local_message(task_t *task)
 {
     actor_t *actor = task->task.smt.to_actor;
-    mailbox_t *previous_message = actor->mailbox;
     mailbox_t *current_message = actor->mailbox;
 
-    if (previous_message == NULL) {
+    if (current_message == NULL) {
         actor->mailbox = task->task.smt.message;
     } else {
-        while (current_message != NULL) {
-            previous_message = current_message;
+        while (current_message->next_message != NULL) {
             current_message = current_message->next_message;
         }
 
-        previous_message->next_message = task->task.smt.message;
+        current_message->next_message = task->task.smt.message;
     }
 
     enqueue_task(create_process_message_task(actor));
@@ -209,7 +203,7 @@ void send_remote_message(task_t *task)
 void initialise_actor_system()
 {
     PHACTOR_G(tasks).task = NULL;
-    PHACTOR_G(thread_count) = sysconf(_SC_NPROCESSORS_ONLN);
+    PHACTOR_G(thread_count) = 1;//sysconf(_SC_NPROCESSORS_ONLN);
 
     PHACTOR_G(main_thread).id = (ulong) pthread_self();
     PHACTOR_G(main_thread).ls = TSRMLS_CACHE;
@@ -342,21 +336,20 @@ actor_t *get_actor_from_zval(zval *actor_zval_obj)
 void add_new_actor(actor_t *new_actor)
 {
     pthread_mutex_lock(&PHACTOR_G(phactor_actors_mutex));
-    actor_t *previous_actor = PHACTOR_G(actor_system).actors;
+
     actor_t *current_actor = PHACTOR_G(actor_system).actors;
 
-    if (previous_actor == NULL) {
+    if (current_actor == NULL) {
         PHACTOR_G(actor_system).actors = new_actor;
         pthread_mutex_unlock(&PHACTOR_G(phactor_actors_mutex));
         return;
     }
 
-    while (current_actor != NULL) {
-        previous_actor = current_actor;
+    while (current_actor->next != NULL) {
         current_actor = current_actor->next;
     }
 
-    previous_actor->next = new_actor;
+    current_actor->next = new_actor;
 
     pthread_mutex_unlock(&PHACTOR_G(phactor_actors_mutex));
 }
@@ -400,44 +393,30 @@ task_t *create_process_message_task(actor_t *actor)
 void enqueue_task(task_t *new_task)
 {
     pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
-    task_t *previous_task = PHACTOR_G(tasks).task;
     task_t *current_task = PHACTOR_G(tasks).task;
 
-    if (previous_task == NULL) {
+    if (current_task == NULL) {
         PHACTOR_G(tasks).task = new_task;
         pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
         return;
     }
 
-    while (current_task != NULL) {
-        previous_task = current_task;
+    while (current_task->next_task != NULL) {
         current_task = current_task->next_task;
     }
 
-    previous_task->next_task = new_task;
+    current_task->next_task = new_task;
     pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
 }
 
 /* This function is only invoked in the scheduler, which already locks phactor_task_mutex */
-void dequeue_task(task_t *task)
+static task_t *dequeue_task(void)
 {
-    task_t *previous_task = PHACTOR_G(tasks).task;
-    task_t *current_task = PHACTOR_G(tasks).task;
+    task_t *task = PHACTOR_G(tasks).task;
 
-    if (previous_task == task) {
-        PHACTOR_G(tasks).task = PHACTOR_G(tasks).task->next_task;
-        // free(task);
-        return;
-    }
+    PHACTOR_G(tasks).task = task->next_task;
 
-    while (current_task != task) {
-        previous_task = current_task;
-        current_task = current_task->next_task;
-    }
-
-    previous_task->next_task = current_task->next_task;
-
-    // free(task);
+    return task;
 }
 
 void remove_actor(actor_t *target_actor)
