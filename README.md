@@ -1,39 +1,36 @@
-The PHP Interpreter
-===================
+# Valgrind Bug
 
-This is the github mirror of the official PHP repository located at
-http://git.php.net.
+Reproduction:
 
-[![Build Status](https://secure.travis-ci.org/php/php-src.svg?branch=master)](http://travis-ci.org/php/php-src)
+`./buildconf`
+`./configure --disable-all --enable-phactor --enable-maintainer-zts --enable-debug`
+`make`
 
-Pull Requests
-=============
-PHP accepts pull requests via github. Discussions are done on github, but
-depending on the topic can also be relayed to the official PHP developer
-mailing list internals@lists.php.net.
+```php
+<?php
 
-New features require an RFC and must be accepted by the developers.
-See https://wiki.php.net/rfc and https://wiki.php.net/rfc/voting for more
-information on the process.
+$actorSystem = new ActorSystem();
 
-Bug fixes **do not** require an RFC, but require a bugtracker ticket. Always
-open a ticket at https://bugs.php.net and reference the bug id using #NNNNNN.
+class Test extends Actor
+{
+    public function receive($sender, $message){}
+}
 
-    Fix #55371: get_magic_quotes_gpc() throws deprecation warning
+new class (new Test) extends Actor {
+    function __construct(Test $test)
+    {
+        var_dump($this, $test);
+        $this->send($test, 1);
+    }
 
-    After removing magic quotes, the get_magic_quotes_gpc function caused
-    a deprecate warning. get_magic_quotes_gpc can be used to detected
-    the magic_quotes behavior and therefore should not raise a warning at any
-    time. The patch removes this warning
+    function receive($sender, $message){}
+};
 
-We do not merge pull requests directly on github. All PRs will be
-pulled and pushed through http://git.php.net.
+$actorSystem->block();
+```
 
+`valgrind sapi/cli/php ext/phactor/script.php`
 
-Guidelines for contributors
-===========================
-- [CODING_STANDARDS](/CODING_STANDARDS)
-- [README.GIT-RULES](/README.GIT-RULES)
-- [README.MAILINGLIST_RULES](/README.MAILINGLIST_RULES)
-- [README.RELEASE_PROCESS](/README.RELEASE_PROCESS)
-
+Result:
+LLDB should crash, causing Terminal to crash, forcing the computer to restart
+in order to make Terminal usable again.
