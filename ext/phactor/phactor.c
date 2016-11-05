@@ -115,7 +115,7 @@ void *worker_function(thread_t *phactor_thread)
 
 void process_message(task_t *task)
 {
-    mailbox_t *mail = task->task.pmt.for_actor->mailbox;
+    message_t *mail = task->task.pmt.for_actor->mailbox;
     actor_t *actor = task->task.pmt.for_actor;
     zval *return_value = malloc(sizeof(zval));
     zval *sender = malloc(sizeof(zval));
@@ -154,20 +154,21 @@ Enqueue the to_actor as a new task to have its mailbox processed.
 */
 void send_local_message(task_t *task)
 {
-    actor_t *actor = task->task.smt.to_actor;
-    mailbox_t *current_message = actor->mailbox;
+    actor_t *to_actor = task->task.smt.to_actor;
+    message_t *current_message = to_actor->mailbox;
+    message_t *new_message = create_new_message(task->task.smt.from_actor, task->task.smt.message);
 
     if (current_message == NULL) {
-        actor->mailbox = task->task.smt.message;
+        to_actor->mailbox = new_message;
     } else {
         while (current_message->next_message != NULL) {
             current_message = current_message->next_message;
         }
 
-        current_message->next_message = task->task.smt.message;
+        current_message->next_message = new_message;
     }
 
-    enqueue_task(create_process_message_task(actor));
+    enqueue_task(create_process_message_task(to_actor));
 }
 
 void send_remote_message(task_t *task)
@@ -179,35 +180,34 @@ void send_remote_message(task_t *task)
 
 task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zval *message)
 {
-    actor_t *to_actor = get_actor_from_zval(to_actor_zval);
-    actor_t *from_actor = get_actor_from_zval(from_actor_zval);
     task_t *new_task = malloc(sizeof(task_t));
 
-    new_task->task.smt.to_actor = to_actor;
-    new_task->task.smt.message = create_new_message(from_actor, message);
+    new_task->task.smt.from_actor = get_actor_from_zval(from_actor_zval);
+    new_task->task.smt.to_actor = get_actor_from_zval(to_actor_zval);
+    new_task->task.smt.message = malloc(sizeof(zval));
+    ZVAL_COPY(new_task->task.smt.message, message); // @todo ZVAL_DUP instead?
     new_task->task_type = SEND_MESSAGE_TASK;
     new_task->next_task = NULL;
 
     return new_task;
 }
 
-mailbox_t *create_new_message(actor_t *from_actor, zval *message)
+message_t *create_new_message(actor_t *from_actor, zval *message)
 {
-    mailbox_t *new_message = malloc(sizeof(mailbox_t));
+    message_t *new_message = malloc(sizeof(message_t));
 
     new_message->from_actor = from_actor;
-    new_message->message = malloc(sizeof(zval));
-    ZVAL_COPY(new_message->message, message); // @todo ZVAL_DUP instead?
+    new_message->message = message;
     new_message->next_message = NULL;
 
     return new_message;
 }
 
-task_t *create_process_message_task(actor_t *actor)
+task_t *create_process_message_task(actor_t *for_actor)
 {
     task_t *new_task = malloc(sizeof(task_t));
 
-    new_task->task.pmt.for_actor = actor;
+    new_task->task.pmt.for_actor = for_actor;
     new_task->task_type = PROCESS_MESSAGE_TASK;
     new_task->next_task = NULL;
 

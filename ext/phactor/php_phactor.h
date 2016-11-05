@@ -92,14 +92,14 @@ ZEND_TSRMLS_CACHE_EXTERN()
 /* }}} */
 
 
-typedef struct _mailbox_t {
+typedef struct _message_t {
     struct _actor_t *from_actor;
     zval *message;
-    struct _mailbox_t *next_message;
-} mailbox_t;
+    struct _message_t *next_message;
+} message_t;
 
 typedef struct _actor_t {
-    mailbox_t *mailbox;
+    message_t *mailbox;
     struct _actor_t *next;
     zend_string *actor_ref; // @todo make char* instead? It's going to be a fixed length
     uint16_t blocking;
@@ -120,8 +120,9 @@ typedef struct _process_message_task {
 } process_message_task;
 
 typedef struct _send_message_task {
+    actor_t *from_actor;
     actor_t *to_actor;
-    mailbox_t *message;
+    zval *message;
 } send_message_task;
 
 typedef struct _task_t {
@@ -176,10 +177,10 @@ actor_t *get_actor_from_object(zend_object *actor_obj);
 actor_t *get_actor_from_zval(zval *actor_zval_obj);
 task_t *create_send_message_task(zval *from_actor, zval *actor_zval, zval *message);
 void initialise_worker_thread_environments(thread_t *phactor_thread);
-task_t *create_process_message_task(actor_t *actor);
+task_t *create_process_message_task(actor_t *for_actor)
 zend_object* phactor_actor_ctor(zend_class_entry *entry);
 void add_new_actor(actor_t *new_actor);
-mailbox_t *create_new_message(actor_t *from_actor, zval *message);
+message_t *create_new_message(actor_t *from_actor, zval *message);
 void send_message(task_t *task);
 void send_local_message(task_t *task);
 void send_remote_message(task_t *task);

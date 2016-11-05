@@ -43,7 +43,7 @@ void debug_tasks(task_queue_t tasks)
                 task->task.pmt.for_actor, task->task.pmt.for_actor->mailbox->from_actor, task->task.pmt.for_actor->mailbox->message);
         } else {
             printf(", To Actor: %p, Message: {from_actor = %p, message = %p}",
-            task->task.smt.to_actor, task->task.smt.message->from_actor, task->task.smt.message->message);
+            task->task.smt.to_actor, task->task.smt.from_actor, task->task.smt.message);
         }
 
         printf("\n");
