@@ -93,22 +93,20 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 
 typedef struct _message_t {
-    struct _actor_t *from_actor;
+    struct _actor_t *from_actor; // actor struct or char[33] UUID?
+    zend_object *sender;
     zval *message;
     struct _message_t *next_message;
 } message_t;
 
 typedef struct _actor_t {
-    message_t *mailbox;
-    struct _actor_t *next;
-    zend_string *actor_ref; // @todo make char* instead? It's going to be a fixed length
-    uint16_t blocking;
-    zend_execute_data *state;
-    // zval *return_value;
-    // zval *actor_z;
-    zend_object obj;
+    char ref[33]; // 33
+    message_t *mailbox; // 8
+    struct _actor_t *next; // 8
+    zend_execute_data *state; // 8
+    zend_object obj; // 56
 } actor_t;
-
+// 115
 typedef struct _actor_system_t {
     // char system_reference[10]; // @todo needed when remote actors are introduced
     actor_t *actors;
@@ -169,15 +167,14 @@ void *scheduler();
 void process_message(task_t *task);
 void enqueue_task(task_t *task);
 static task_t *dequeue_task(void);
-zend_string *spl_object_hash(zend_object *obj);
-zend_string *spl_zval_object_hash(zval *zval_obj);
+void spl_object_hash(char *ref, zend_object obj);
 zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_actor, zval *message);
-actor_t *get_actor_from_hash(zend_string *actor_object_ref);
+actor_t *get_actor_from_hash(char *ref);
 actor_t *get_actor_from_object(zend_object *actor_obj);
 actor_t *get_actor_from_zval(zval *actor_zval_obj);
 task_t *create_send_message_task(zval *from_actor, zval *actor_zval, zval *message);
 void initialise_worker_thread_environments(thread_t *phactor_thread);
-task_t *create_process_message_task(actor_t *for_actor)
+task_t *create_process_message_task(actor_t *for_actor);
 zend_object* phactor_actor_ctor(zend_class_entry *entry);
 void add_new_actor(actor_t *new_actor);
 message_t *create_new_message(actor_t *from_actor, zval *message);

@@ -81,21 +81,14 @@ void *worker_function(thread_t *phactor_thread)
     initialise_worker_thread_environments(phactor_thread);
 
     while (1) {
-        pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
-
-        if (PHACTOR_G(tasks).task == NULL) {
-            if (PHACTOR_G(php_shutdown)) {
-                pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
-                break;
-            }
-            pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
-            continue;
-        }
-        debug_tasks(PHACTOR_G(tasks));
-
         task_t *current_task = dequeue_task();
 
-        pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
+        if (!current_task) {
+            if (PHACTOR_G(php_shutdown)) {
+                break;
+            }
+            continue;
+        }
 
         switch (current_task->task_type) {
             case SEND_MESSAGE_TASK:
@@ -115,17 +108,19 @@ void *worker_function(thread_t *phactor_thread)
 
 void process_message(task_t *task)
 {
-    message_t *mail = task->task.pmt.for_actor->mailbox;
+    message_t *message = task->task.pmt.for_actor->mailbox;
     actor_t *actor = task->task.pmt.for_actor;
     zval *return_value = malloc(sizeof(zval));
     zval *sender = malloc(sizeof(zval));
 
-    ZVAL_OBJ(sender, &mail->from_actor->obj);
+    // ZVAL_OBJ(sender, &message->from_actor->obj);
+    ZVAL_OBJ(sender, message->sender);
     actor->mailbox = actor->mailbox->next_message;
 
-    // zend_call_user_method(actor->obj, return_value, sender, mail->message);
-    // zval_ptr_dtor(mail->message);
-    free(mail);
+    zend_call_user_method(actor->obj, return_value, sender, message->message);
+    // zval_ptr_dtor(message->message);
+    free(message->message);
+    free(message);
 
     // zval_ptr_dtor(sender);
     free(sender);
@@ -137,6 +132,8 @@ void process_message(task_t *task)
     free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
     // zval_ptr_dtor(mail->from_actor);
     // free(mail->message);
+
+    // --GC_REFCOUNT(Z_COUNTED_P(&actor->obj));
 }
 
 void send_message(task_t *task)
@@ -182,12 +179,13 @@ task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zva
 {
     task_t *new_task = malloc(sizeof(task_t));
 
+    new_task->task_type = SEND_MESSAGE_TASK;
+    new_task->next_task = NULL;
     new_task->task.smt.from_actor = get_actor_from_zval(from_actor_zval);
     new_task->task.smt.to_actor = get_actor_from_zval(to_actor_zval);
     new_task->task.smt.message = malloc(sizeof(zval));
-    ZVAL_COPY(new_task->task.smt.message, message); // @todo ZVAL_DUP instead?
-    new_task->task_type = SEND_MESSAGE_TASK;
-    new_task->next_task = NULL;
+
+    ZVAL_DUP(new_task->task.smt.message, message); // @todo ZVAL_DUP instead?
 
     return new_task;
 }
@@ -199,6 +197,9 @@ message_t *create_new_message(actor_t *from_actor, zval *message)
     new_message->from_actor = from_actor;
     new_message->message = message;
     new_message->next_message = NULL;
+    new_message->sender = malloc(sizeof(zend_object) + zend_object_properties_size(Actor_ce));
+
+    memcpy(new_message->sender, &from_actor->obj, sizeof(zend_object));
 
     return new_message;
 }
@@ -236,9 +237,15 @@ void enqueue_task(task_t *new_task)
 /* This function is only invoked in the scheduler, which already locks phactor_task_mutex */
 static task_t *dequeue_task(void)
 {
+    pthread_mutex_lock(&PHACTOR_G(phactor_task_mutex));
+
     task_t *task = PHACTOR_G(tasks).task;
 
-    PHACTOR_G(tasks).task = task->next_task;
+    if (task) {
+        PHACTOR_G(tasks).task = task->next_task;
+    }
+
+    pthread_mutex_unlock(&PHACTOR_G(phactor_task_mutex));
 
     return task;
 }
@@ -316,18 +323,10 @@ void initialise_worker_thread_environments(thread_t *phactor_thread)
     pthread_mutex_unlock(&PHACTOR_G(phactor_mutex));
 }
 
-// @todo unused for now
-zend_string *spl_object_hash(zend_object *obj)
+// @todo actually generate UUIDs for remote actors
+void spl_object_hash(char *ref, zend_object obj)
 {
-    // @todo this is for when remote actors are introduced - not needed for now
-    // this should generate a UUID instead...
-    return strpprintf(20, "%s:%08d", "node_id_here", obj->handle);
-}
-
-// @todo unused for now - may not be needed...
-zend_string *spl_zval_object_hash(zval *zval_obj)
-{
-    return spl_object_hash(Z_OBJ_P(zval_obj));
+    sprintf(ref, "%022d%010d", rand(), obj.handle);
 }
 
 actor_t *get_actor_from_object(zend_object *actor_obj)
@@ -352,7 +351,7 @@ actor_t *get_actor_from_object(zend_object *actor_obj)
 
     // get actor hash (a UUID basically, so that actors are unique in the node cluster)
 
-    // while (strncmp(current_actor->actor_ref->val, actor_object_ref->val, sizeof(char) * 32) != 0) {
+    // while (strncmp(current_actor->ref->val, actor_object_ref->val, sizeof(char) * 32) != 0) {
     //     current_actor = current_actor->next;
     //
     //     if (current_actor == NULL) { // debugging only - will not work for remote actors
@@ -424,40 +423,29 @@ void remove_actor(actor_t *target_actor)
 {
     pthread_mutex_lock(&phactor_actors_mutex);
 
+    /*
+    Check if remote actor? target_actor->is_remote ?
+    Otherwise, the actor should exist
+    Just perform a NULL check on target_actor? get_actor_from_object is invoked
+    before this, so it will return NULL if local actor is not found.
+    */
+
     actor_t *current_actor = PHACTOR_G(actor_system).actors;
-
-    if (current_actor == target_actor) {
-        actor_system.actors = current_actor->next;
-        // zend_object_std_dtor(&target_actor->obj);
-        // free(target_actor->obj);
-        // zend_string_free(target_actor->actor_ref);
-
-        // if (target_actor->return_value != NULL) {
-        //     free(target_actor->return_value); // tmp hack to fix mem leak
-        // }
-
-        // efree(target_actor);
-        pthread_mutex_unlock(&phactor_actors_mutex);
-        return;
-    }
+    actor_t *previous_actor = current_actor;
 
     while (current_actor != target_actor) {
-        if (current_actor->next == target_actor) {
-            current_actor->next = current_actor->next->next;
-            // zend_object_std_dtor(&target_actor->obj);
-            // free(target_actor->obj);
-            // zend_string_free(target_actor->actor_ref);
-
-            // if (target_actor->return_value != NULL) {
-            //     free(target_actor->return_value); // tmp hack to fix mem leak
-            // }
-
-            // efree(target_actor);
-            break;
-        }
-
+        previous_actor = current_actor;
         current_actor = current_actor->next;
     }
+
+    previous_actor->next = current_actor->next;
+
+    GC_REFCOUNT(&target_actor->obj) = 1;
+
+    zend_object_std_dtor(&target_actor->obj);
+
+    efree(target_actor);
+
     pthread_mutex_unlock(&phactor_actors_mutex);
 }
 
@@ -466,7 +454,6 @@ void remove_actor_object(zval *actor)
     remove_actor(get_actor_from_zval(actor));
 }
 
-// @todo currently unused
 void php_actor_free_object(zend_object *obj)
 {
     actor_t *target_actor = get_actor_from_object(obj);
@@ -476,76 +463,9 @@ void php_actor_free_object(zend_object *obj)
         return;
     }
 
-    // @debug purposes only - could be remote actor?
-    printf("Tried to free a non-existent object\n");
+    // @todo any checking? Could either be remote actor or may have been manually
+    // free'd via Actor::remove
 }
-
-// taken (and adapted) from zend_generators.c
-// static void zend_restore_call_stack(actor_t *actor) /* {{{ */
-// {
-// 	zend_execute_data *call, *new_call, *prev_call = NULL;
-//
-// 	call = actor->state;
-// 	do {
-// 		new_call = zend_vm_stack_push_call_frame(
-// 			(ZEND_CALL_INFO(call) & ~ZEND_CALL_ALLOCATED),
-// 			call->func,
-// 			ZEND_CALL_NUM_ARGS(call),
-// 			(Z_TYPE(call->This) == IS_UNDEF) ?
-// 				(zend_class_entry*)Z_OBJ(call->This) : NULL,
-// 			(Z_TYPE(call->This) != IS_UNDEF) ?
-// 				Z_OBJ(call->This) : NULL);
-// 		memcpy(((zval*)new_call) + ZEND_CALL_FRAME_SLOT, ((zval*)call) + ZEND_CALL_FRAME_SLOT, ZEND_CALL_NUM_ARGS(call) * sizeof(zval));
-// 		new_call->prev_execute_data = prev_call;
-// 		prev_call = new_call;
-//
-// 		call = call->prev_execute_data;
-// 	} while (call);
-// 	actor->state->call = prev_call;
-// 	efree(actor->state);
-// 	actor->state = NULL;
-// }
-// /* }}} */
-//
-// // taken from zend_generators.c
-// static zend_execute_data* zend_freeze_call_stack(zend_execute_data *execute_data) /* {{{ */
-// {
-// 	size_t used_stack;
-// 	zend_execute_data *call, *new_call, *prev_call = NULL;
-// 	zval *stack;
-//
-// 	/* calculate required stack size */
-// 	used_stack = 0;
-// 	call = EX(call);
-// 	do {
-// 		used_stack += ZEND_CALL_FRAME_SLOT + ZEND_CALL_NUM_ARGS(call);
-// 		call = call->prev_execute_data;
-// 	} while (call);
-//
-// 	stack = emalloc(used_stack * sizeof(zval));
-//
-// 	/* save stack, linking frames in reverse order */
-// 	call = EX(call);
-// 	do {
-// 		size_t frame_size = ZEND_CALL_FRAME_SLOT + ZEND_CALL_NUM_ARGS(call);
-//
-// 		new_call = (zend_execute_data*)(stack + used_stack - frame_size);
-// 		memcpy(new_call, call, frame_size * sizeof(zval));
-// 		used_stack -= frame_size;
-// 		new_call->prev_execute_data = prev_call;
-// 		prev_call = new_call;
-//
-// 		new_call = call->prev_execute_data;
-// 		zend_vm_stack_free_call_frame(call);
-// 		call = new_call;
-// 	} while (call);
-//
-// 	execute_data->call = NULL;
-// 	ZEND_ASSERT(prev_call == (zend_execute_data*)stack);
-//
-// 	return prev_call;
-// }
-/* }}} */
 
 // @todo currently impossible with current ZE
 void receive_block(zval *actor_zval, zval *return_value)
@@ -554,7 +474,6 @@ void receive_block(zval *actor_zval, zval *return_value)
 
     // zend_execute_data *execute_data = EG(current_execute_data);
 
-    actor->blocking = 1;
     // actor->state = zend_freeze_call_stack(EG(current_execute_data));
     // actor->return_value = actor_zval; // tmp
 
@@ -573,10 +492,8 @@ void force_shutdown_actor_system()
 }
 
 /*
-No mutex since:
- - php_shutdown can only be set to 1 anyway
- - thread_count is not modified after being set (upon actor system startup)
- - worker_threads is not modified after being set (upon actor system startup)
+No mutex since only php_shutdown is modifiable by different threads, and can
+only be set to 1.
 */
 void scheduler_blocking()
 {
@@ -727,24 +644,24 @@ void phactor_actor_write_property(zval *object, zval *member, zval *value, void 
 
 zend_object* phactor_actor_ctor(zend_class_entry *entry)
 {
-    actor_t *new_actor = ecalloc(1, sizeof(actor_t) + zend_object_properties_size(entry));
+    actor_t *new_actor = ecalloc(1, sizeof(actor_t)); // + zend_object_properties_size(entry)
 
-    // @todo create the UUID on actor creation - for remote actors
-    // new_actor->actor_ref = spl_zval_object_hash(actor_zval);
     new_actor->next = NULL;
     new_actor->mailbox = NULL;
-    new_actor->blocking = 0;
     new_actor->state = NULL;
-    // new_actor->return_value = NULL;
 
     zend_object_std_init(&new_actor->obj, entry);
     object_properties_init(&new_actor->obj, entry);
 
+    ++GC_REFCOUNT(&new_actor->obj); // needed for ephemeral actors
+
     new_actor->obj.handlers = &phactor_actor_handlers;
+
+    spl_object_hash(new_actor->ref, new_actor->obj);
 
     add_new_actor(new_actor);
 
-	return &new_actor->obj;
+    return &new_actor->obj;
 }
 
 zend_object* phactor_actor_system_ctor(zend_class_entry *entry)
