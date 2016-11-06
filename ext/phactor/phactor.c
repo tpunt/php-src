@@ -108,32 +108,24 @@ void *worker_function(thread_t *phactor_thread)
 
 void process_message(task_t *task)
 {
-    message_t *message = task->task.pmt.for_actor->mailbox;
     actor_t *actor = task->task.pmt.for_actor;
+    message_t *message = actor->mailbox;
     zval *return_value = malloc(sizeof(zval));
     zval *sender = malloc(sizeof(zval));
 
-    // ZVAL_OBJ(sender, &message->from_actor->obj);
     ZVAL_OBJ(sender, message->sender);
     actor->mailbox = actor->mailbox->next_message;
 
     zend_call_user_method(actor->obj, return_value, sender, message->message);
+
     // zval_ptr_dtor(message->message);
     free(message->message);
+    efree(message->sender);
     free(message);
 
     // zval_ptr_dtor(sender);
     free(sender);
-
-    // if (actor->return_value != NULL) {
-        // free(actor->return_value); // tmp hack to fix mem leak
-    // }
-    // actor->return_value = return_value; // @todo memory leak
     free(return_value); // @todo remove this line (return the value instead? Or store it elsewhere?)
-    // zval_ptr_dtor(mail->from_actor);
-    // free(mail->message);
-
-    // --GC_REFCOUNT(Z_COUNTED_P(&actor->obj));
 }
 
 void send_message(task_t *task)
@@ -197,7 +189,7 @@ message_t *create_new_message(actor_t *from_actor, zval *message)
     new_message->from_actor = from_actor;
     new_message->message = message;
     new_message->next_message = NULL;
-    new_message->sender = malloc(sizeof(zend_object) + zend_object_properties_size(Actor_ce));
+    new_message->sender = ecalloc(1, sizeof(zend_object));
 
     memcpy(new_message->sender, &from_actor->obj, sizeof(zend_object));
 
@@ -274,10 +266,10 @@ zval* zend_call_user_method(zend_object object, zval *retval_ptr, zval *from_act
     receive_function = zend_hash_find_ptr(&object.ce->function_table, receive_function_name);
 
     fcc.initialized = 1;
-	fcc.object = &object;
-	fcc.calling_scope = object.ce;
-	fcc.called_scope = object.ce;
-	fcc.function_handler = receive_function;
+    fcc.object = &object;
+    fcc.calling_scope = object.ce;
+    fcc.called_scope = object.ce;
+    fcc.function_handler = receive_function;
 
     result = zend_call_function(&fci, &fcc);
 
@@ -467,17 +459,24 @@ void php_actor_free_object(zend_object *obj)
     // free'd via Actor::remove
 }
 
+void php_actor_system_free_object(zend_object *obj)
+{
+    actor_system_t *as = XtOffsetOf(actor_system_t, obj);
+
+    efree(as);
+}
+
 // @todo currently impossible with current ZE
 void receive_block(zval *actor_zval, zval *return_value)
 {
-    actor_t *actor = get_actor_from_zval(actor_zval);
+    // actor_t *actor = get_actor_from_zval(actor_zval);
 
     // zend_execute_data *execute_data = EG(current_execute_data);
 
     // actor->state = zend_freeze_call_stack(EG(current_execute_data));
     // actor->return_value = actor_zval; // tmp
 
-    EG(current_execute_data) = NULL;
+    // EG(current_execute_data) = NULL;
 
     // return PHACTOR_ZG(current_message_value); // not the solution...
 }
@@ -713,6 +712,7 @@ PHP_MINIT_FUNCTION(phactor)
 	memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
 
     phactor_actor_system_handlers.offset = XtOffsetOf(actor_system_t, obj);
+    phactor_actor_system_handlers.dtor_obj = php_actor_system_free_object;
 
     /* Actor Class */
 	INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);

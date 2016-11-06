@@ -315,7 +315,7 @@ static inline zend_function* pthreads_copy_internal_function(zend_function *func
 } /* }}} */
 
 /* {{{ */
-static zend_function* pthreads_copy_function(zend_function *function) {
+zend_function* pthreads_copy_function(zend_function *function) {
 	zend_function *copy = zend_hash_index_find_ptr(&PHACTOR_ZG(resolve), (zend_ulong)function);
 
 	if (copy) {

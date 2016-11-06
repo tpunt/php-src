@@ -93,20 +93,20 @@ ZEND_TSRMLS_CACHE_EXTERN()
 
 
 typedef struct _message_t {
-    struct _actor_t *from_actor; // actor struct or char[33] UUID?
-    zend_object *sender;
+    struct _actor_t *from_actor; // needed anymore?
+    zend_object *sender; // @todo Use actor ref (char[33] UUID) instead? Actor::send(Actor|string $from, mixed $msg)
     zval *message;
     struct _message_t *next_message;
 } message_t;
 
 typedef struct _actor_t {
-    char ref[33]; // 33
-    message_t *mailbox; // 8
-    struct _actor_t *next; // 8
-    zend_execute_data *state; // 8
-    zend_object obj; // 56
+    char ref[33];
+    message_t *mailbox;
+    struct _actor_t *next;
+    zend_execute_data *state;
+    zend_object obj;
 } actor_t;
-// 115
+
 typedef struct _actor_system_t {
     // char system_reference[10]; // @todo needed when remote actors are introduced
     actor_t *actors;
