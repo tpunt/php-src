@@ -118,7 +118,7 @@ void process_message(task_t *task)
 
     zend_call_user_method(actor->obj, return_value, sender, message->message);
 
-    // zval_ptr_dtor(message->message);
+    zval_ptr_dtor(message->message);
     free(message->message);
     efree(message->sender);
     free(message);
@@ -177,7 +177,7 @@ task_t *create_send_message_task(zval *from_actor_zval, zval *to_actor_zval, zva
     new_task->task.smt.to_actor = get_actor_from_zval(to_actor_zval);
     new_task->task.smt.message = malloc(sizeof(zval));
 
-    ZVAL_DUP(new_task->task.smt.message, message); // @todo ZVAL_DUP instead?
+    ZVAL_DUP(new_task->task.smt.message, message);
 
     return new_task;
 }
@@ -391,6 +391,7 @@ void initialise_actor_system()
     PHACTOR_G(main_thread).ls = TSRMLS_CACHE;
     // main_thread.thread = tsrm_thread_id();
 
+    // taken from pthreads - @todo needed still?
     if (Z_TYPE(EG(user_exception_handler)) != IS_UNDEF) {
         if (Z_TYPE_P(&EG(user_exception_handler)) == IS_OBJECT) {
     		rebuild_object_properties(Z_OBJ_P(&EG(user_exception_handler)));
@@ -413,14 +414,12 @@ void initialise_actor_system()
 
 void remove_actor(actor_t *target_actor)
 {
-    pthread_mutex_lock(&phactor_actors_mutex);
+    if (target_actor == NULL) { // remote actor
+        printf("Freeing remote actor\n"); // when will a remote actor actually be freed?
+        return;
+    }
 
-    /*
-    Check if remote actor? target_actor->is_remote ?
-    Otherwise, the actor should exist
-    Just perform a NULL check on target_actor? get_actor_from_object is invoked
-    before this, so it will return NULL if local actor is not found.
-    */
+    pthread_mutex_lock(&phactor_actors_mutex);
 
     actor_t *current_actor = PHACTOR_G(actor_system).actors;
     actor_t *previous_actor = current_actor;
@@ -432,13 +431,13 @@ void remove_actor(actor_t *target_actor)
 
     previous_actor->next = current_actor->next;
 
-    GC_REFCOUNT(&target_actor->obj) = 1;
+    pthread_mutex_unlock(&phactor_actors_mutex);
+
+    // GC_REFCOUNT(&target_actor->obj) = 1; // @todo safe?
 
     zend_object_std_dtor(&target_actor->obj);
 
     efree(target_actor);
-
-    pthread_mutex_unlock(&phactor_actors_mutex);
 }
 
 void remove_actor_object(zval *actor)
@@ -446,24 +445,31 @@ void remove_actor_object(zval *actor)
     remove_actor(get_actor_from_zval(actor));
 }
 
+void php_actor_dtor_object(zend_object *obj)
+{
+    zend_objects_destroy_object(obj);
+}
+
 void php_actor_free_object(zend_object *obj)
 {
-    actor_t *target_actor = get_actor_from_object(obj);
-
-    if (target_actor != NULL) {
-        remove_actor(target_actor);
-        return;
-    }
-
-    // @todo any checking? Could either be remote actor or may have been manually
-    // free'd via Actor::remove
+    remove_actor(get_actor_from_object(obj));
 }
 
 void php_actor_system_free_object(zend_object *obj)
 {
-    actor_system_t *as = XtOffsetOf(actor_system_t, obj);
+    // actor_system_t *as = XtOffsetOf(actor_system_t, obj);
 
-    efree(as);
+    // efree(as);
+
+    actor_t *current_actor = PHACTOR_G(actor_system).actors;
+
+    while (current_actor) {
+        actor_t *next_actor = current_actor->next;
+
+        remove_actor(current_actor);
+
+        current_actor = next_actor;
+    }
 }
 
 // @todo currently impossible with current ZE
@@ -635,12 +641,6 @@ zend_function_entry Actor_methods[] = {
 
 
 
-void phactor_actor_write_property(zval *object, zval *member, zval *value, void **cache_slot)
-{
-    //
-    // rebuild_object_properties
-}
-
 zend_object* phactor_actor_ctor(zend_class_entry *entry)
 {
     actor_t *new_actor = ecalloc(1, sizeof(actor_t)); // + zend_object_properties_size(entry)
@@ -702,29 +702,29 @@ HashTable *phactor_actor_get_properties(zval *object)
 PHP_MINIT_FUNCTION(phactor)
 {
     zend_class_entry ce;
-	zend_object_handlers *zh = zend_get_std_object_handlers();
+    zend_object_handlers *zh = zend_get_std_object_handlers();
 
     /* ActorSystem Class */
-	INIT_CLASS_ENTRY(ce, "ActorSystem", ActorSystem_methods);
-	ActorSystem_ce = zend_register_internal_class(&ce);
+    INIT_CLASS_ENTRY(ce, "ActorSystem", ActorSystem_methods);
+    ActorSystem_ce = zend_register_internal_class(&ce);
     // ActorSystem_ce->create_object = phactor_actor_system_ctor;
 
-	memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
+    memcpy(&phactor_actor_system_handlers, zh, sizeof(zend_object_handlers));
 
     phactor_actor_system_handlers.offset = XtOffsetOf(actor_system_t, obj);
     phactor_actor_system_handlers.dtor_obj = php_actor_system_free_object;
 
     /* Actor Class */
-	INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);
-	Actor_ce = zend_register_internal_class(&ce);
-	Actor_ce->ce_flags |= ZEND_ACC_ABSTRACT;
+    INIT_CLASS_ENTRY(ce, "Actor", Actor_methods);
+    Actor_ce = zend_register_internal_class(&ce);
+    Actor_ce->ce_flags |= ZEND_ACC_ABSTRACT;
     Actor_ce->create_object = phactor_actor_ctor;
-    // Actor_ce->write_property = phactor_actor_write_property;
 
-	memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
+    memcpy(&phactor_actor_handlers, zh, sizeof(zend_object_handlers));
 
     phactor_actor_handlers.offset = XtOffsetOf(actor_t, obj);
-    phactor_actor_handlers.dtor_obj = php_actor_free_object;
+    phactor_actor_handlers.dtor_obj = php_actor_dtor_object;
+    phactor_actor_handlers.free_obj = php_actor_free_object;
     phactor_actor_handlers.get_debug_info = phactor_actor_get_debug_info;
     phactor_actor_handlers.get_properties = phactor_actor_get_properties;
 
@@ -733,7 +733,7 @@ PHP_MINIT_FUNCTION(phactor)
     TSRMLS_CACHE_UPDATE();
     PHACTOR_G(phactor_instance) = TSRMLS_CACHE;
 
-	return SUCCESS;
+    return SUCCESS;
 }
 /* }}} */
 
