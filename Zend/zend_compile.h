@@ -272,6 +272,8 @@ typedef struct _zend_oparray_context {
 
 #define ZEND_ACC_VARIADIC				0x1000000
 
+#define ZEND_ACC_ASYNC					0x2000000
+
 #define ZEND_ACC_RETURN_REFERENCE		0x4000000
 #define ZEND_ACC_DONE_PASS_TWO			0x8000000
 

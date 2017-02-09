@@ -221,6 +221,8 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %token T_COALESCE        "?? (T_COALESCE)"
 %token T_POW             "** (T_POW)"
 %token T_POW_EQUAL       "**= (T_POW_EQUAL)"
+%token T_ASYNC           "async (T_ASYNC)"
+%token T_AWAIT           "await (T_AWAIT)"
 
 /* Token used to force a parse error from the lexer */
 %token T_ERROR
@@ -273,7 +275,7 @@ reserved_non_modifiers:
 	| T_THROW | T_USE | T_INSTEADOF | T_GLOBAL | T_VAR | T_UNSET | T_ISSET | T_EMPTY | T_CONTINUE | T_GOTO
 	| T_FUNCTION | T_CONST | T_RETURN | T_PRINT | T_YIELD | T_LIST | T_SWITCH | T_ENDSWITCH | T_CASE | T_DEFAULT | T_BREAK
 	| T_ARRAY | T_CALLABLE | T_EXTENDS | T_IMPLEMENTS | T_NAMESPACE | T_TRAIT | T_INTERFACE | T_CLASS
-	| T_CLASS_C | T_TRAIT_C | T_FUNC_C | T_METHOD_C | T_LINE | T_FILE | T_DIR | T_NS_C
+	| T_CLASS_C | T_TRAIT_C | T_FUNC_C | T_METHOD_C | T_LINE | T_FILE | T_DIR | T_NS_C | T_AWAIT
 ;
 
 semi_reserved:
@@ -983,6 +985,17 @@ expr_without_variable:
 			{ $$ = zend_ast_create_decl(ZEND_AST_CLOSURE, $3 | $14 | ZEND_ACC_STATIC, $2, $4,
 			      zend_string_init("{closure}", sizeof("{closure}") - 1, 0),
 			      $6, $8, $12, $9); CG(extra_fn_flags) = $10; }
+    |	T_ASYNC function returns_ref backup_doc_comment '(' parameter_list ')' lexical_vars return_type
+  		backup_fn_flags '{' inner_statement_list '}' backup_fn_flags
+  			{ $$ = zend_ast_create_decl(ZEND_AST_CLOSURE, $3 | $14 | ZEND_ACC_ASYNC, $2, $4,
+  				  zend_string_init("{closure}", sizeof("{closure}") - 1, 0),
+  			      $6, $8, $12, $9); CG(extra_fn_flags) = $10; }
+  	|	T_ASYNC T_STATIC function returns_ref backup_doc_comment '(' parameter_list ')' lexical_vars
+  		return_type backup_fn_flags '{' inner_statement_list '}' backup_fn_flags
+  			{ $$ = zend_ast_create_decl(ZEND_AST_CLOSURE, $4 | $15 | ZEND_ACC_STATIC | ZEND_ACC_ASYNC, $3, $5,
+  			      zend_string_init("{closure}", sizeof("{closure}") - 1, 0),
+  			      $7, $9, $13, $10); CG(extra_fn_flags) = $11; }
+	|	T_AWAIT expr { $$ = zend_ast_create(ZEND_AST_AWAIT, $2, NULL); }
 ;
 
 function:

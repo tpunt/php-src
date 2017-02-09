@@ -5554,6 +5554,14 @@ static void zend_begin_func_decl(znode *result, zend_op_array *op_array, zend_as
 }
 /* }}} */
 
+zend_compile_await(znode *result, zend_ast *ast) /* {{{ */
+{
+	zend_ast *awaitable = ast->child[0];
+	
+	
+}
+/* }}} */
+
 void zend_compile_func_decl(znode *result, zend_ast *ast) /* {{{ */
 {
 	zend_ast_decl *decl = (zend_ast_decl *) ast;
@@ -7962,6 +7970,9 @@ void zend_compile_expr(znode *result, zend_ast *ast) /* {{{ */
 		case ZEND_AST_CLOSURE:
 			zend_compile_func_decl(result, ast);
 			return;
+		case ZEND_AST_AWAIT:
+			zend_compile_await(result, ast);
+			break;
 		default:
 			ZEND_ASSERT(0 /* not supported */);
 	}

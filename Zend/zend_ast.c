@@ -1056,6 +1056,9 @@ tail_call:
 			if (decl->flags & ZEND_ACC_FINAL) {
 				smart_str_appends(str, "final ");
 			}
+			if (decl->flags & ZEND_ACC_ASYNC) {
+				smart_str_appends(str, "async ");
+			}
 			smart_str_appends(str, "function ");
 			if (decl->flags & ZEND_ACC_RETURN_REFERENCE) {
 				smart_str_appendc(str, '&');
