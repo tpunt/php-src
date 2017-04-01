@@ -1542,13 +1542,16 @@ ZEND_VM_HELPER(zend_fetch_static_prop_helper, CONST|TMPVAR|CV, UNUSED|CONST|VAR,
 	SAVE_OPLINE();
 	varname = GET_OP1_ZVAL_PTR_UNDEF(BP_VAR_R);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, OP1_TYPE, opline->op2, OP2_TYPE);
-
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
-		FREE_OP1();
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+	retval = zend_fetch_static_property_address(execute_data, varname, OP1_TYPE, opline->op2, OP2_TYPE, type);
+	
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
+			FREE_OP1();
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	FREE_OP1();

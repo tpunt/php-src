@@ -4876,13 +4876,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = EX_CONSTANT(opline->op1);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, IS_CONST, opline->op2, IS_CONST);
+	retval = zend_fetch_static_property_address(execute_data, varname, IS_CONST, opline->op2, IS_CONST, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
 
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	if (type == BP_VAR_R || type == BP_VAR_IS) {
@@ -6671,13 +6674,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = EX_CONSTANT(opline->op1);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, IS_CONST, opline->op2, IS_VAR);
+	retval = zend_fetch_static_property_address(execute_data, varname, IS_CONST, opline->op2, IS_VAR, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
 
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	if (type == BP_VAR_R || type == BP_VAR_IS) {
@@ -7174,13 +7180,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = EX_CONSTANT(opline->op1);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, IS_CONST, opline->op2, IS_UNUSED);
+	retval = zend_fetch_static_property_address(execute_data, varname, IS_CONST, opline->op2, IS_UNUSED, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
 
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	if (type == BP_VAR_R || type == BP_VAR_IS) {
@@ -35598,13 +35607,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = _get_zval_ptr_cv_undef(execute_data, opline->op1.var);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, IS_CV, opline->op2, IS_CONST);
+	retval = zend_fetch_static_property_address(execute_data, varname, IS_CV, opline->op2, IS_CONST, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
 
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	if (type == BP_VAR_R || type == BP_VAR_IS) {
@@ -38611,13 +38623,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = _get_zval_ptr_cv_undef(execute_data, opline->op1.var);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, IS_CV, opline->op2, IS_VAR);
+	retval = zend_fetch_static_property_address(execute_data, varname, IS_CV, opline->op2, IS_VAR, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
 
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	if (type == BP_VAR_R || type == BP_VAR_IS) {
@@ -39446,13 +39461,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = _get_zval_ptr_cv_undef(execute_data, opline->op1.var);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, IS_CV, opline->op2, IS_UNUSED);
+	retval = zend_fetch_static_property_address(execute_data, varname, IS_CV, opline->op2, IS_UNUSED, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
 
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	if (type == BP_VAR_R || type == BP_VAR_IS) {
@@ -48917,13 +48935,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = _get_zval_ptr_var(opline->op1.var, execute_data, &free_op1);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, (IS_TMP_VAR|IS_VAR), opline->op2, IS_CONST);
+	retval = zend_fetch_static_property_address(execute_data, varname, (IS_TMP_VAR|IS_VAR), opline->op2, IS_CONST, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
-		zval_ptr_dtor_nogc(free_op1);
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
+			zval_ptr_dtor_nogc(free_op1);
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	zval_ptr_dtor_nogc(free_op1);
@@ -49797,13 +49818,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = _get_zval_ptr_var(opline->op1.var, execute_data, &free_op1);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, (IS_TMP_VAR|IS_VAR), opline->op2, IS_VAR);
+	retval = zend_fetch_static_property_address(execute_data, varname, (IS_TMP_VAR|IS_VAR), opline->op2, IS_VAR, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
-		zval_ptr_dtor_nogc(free_op1);
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
+			zval_ptr_dtor_nogc(free_op1);
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	zval_ptr_dtor_nogc(free_op1);
@@ -50216,13 +50240,16 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL zend_fetch_static_prop_helper_SPEC_
 	SAVE_OPLINE();
 	varname = _get_zval_ptr_var(opline->op1.var, execute_data, &free_op1);
 
-	retval = zend_fetch_static_property_address(execute_data, varname, (IS_TMP_VAR|IS_VAR), opline->op2, IS_UNUSED);
+	retval = zend_fetch_static_property_address(execute_data, varname, (IS_TMP_VAR|IS_VAR), opline->op2, IS_UNUSED, type);
 
-	if (UNEXPECTED(retval == NULL)) {
-		ZEND_ASSERT(EG(exception));
-		zval_ptr_dtor_nogc(free_op1);
-		ZVAL_UNDEF(EX_VAR(opline->result.var));
-		HANDLE_EXCEPTION();
+	if (!retval) {
+		if (UNEXPECTED(type != BP_VAR_IS)) {
+			ZEND_ASSERT(EG(exception));
+			zval_ptr_dtor_nogc(free_op1);
+			ZVAL_UNDEF(EX_VAR(opline->result.var));
+			HANDLE_EXCEPTION();
+		}
+		retval = &EG(uninitialized_zval);
 	}
 
 	zval_ptr_dtor_nogc(free_op1);
