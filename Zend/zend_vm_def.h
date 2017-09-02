@@ -7252,7 +7252,7 @@ ZEND_VM_HANDLER(150, ZEND_USER_OPCODE, ANY, ANY)
 
 	switch (ret) {
 		case ZEND_USER_OPCODE_CONTINUE:
-			ZEND_VM_CONTINUE();
+			ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
 		case ZEND_USER_OPCODE_RETURN:
 			if (UNEXPECTED((EX(func)->op_array.fn_flags & ZEND_ACC_GENERATOR) != 0)) {
 				zend_generator *generator = zend_get_running_generator(execute_data);
