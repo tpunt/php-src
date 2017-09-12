@@ -41,6 +41,9 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 #define YYFREE free
 #endif
 
+#define WITHOUT_NEWLINE 0
+#define WITH_NEWLINE 1
+
 %}
 
 %pure-parser
@@ -57,7 +60,7 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %left T_LOGICAL_OR
 %left T_LOGICAL_XOR
 %left T_LOGICAL_AND
-%right T_PRINT
+%right T_PRINT T_PRINTLN
 %right T_YIELD
 %right T_DOUBLE_ARROW
 %right T_YIELD_FROM
@@ -106,6 +109,7 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %token T_LOGICAL_XOR  "xor (T_LOGICAL_XOR)"
 %token T_LOGICAL_AND  "and (T_LOGICAL_AND)"
 %token T_PRINT        "print (T_PRINT)"
+%token T_PRINTLN      "println (T_PRINTLN)"
 %token T_YIELD        "yield (T_YIELD)"
 %token T_YIELD_FROM   "yield from (T_YIELD_FROM)"
 %token T_PLUS_EQUAL   "+= (T_PLUS_EQUAL)"
@@ -148,6 +152,7 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %token T_ELSE      "else (T_ELSE)"
 %token T_ENDIF     "endif (T_ENDIF)"
 %token T_ECHO       "echo (T_ECHO)"
+%token T_ECHOLN     "echoln (T_ECHOLN)"
 %token T_DO         "do (T_DO)"
 %token T_WHILE      "while (T_WHILE)"
 %token T_ENDWHILE   "endwhile (T_ENDWHILE)"
@@ -235,7 +240,7 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %type <ast> foreach_statement declare_statement finally_statement unset_variable variable
 %type <ast> extends_from parameter optional_type argument expr_without_variable global_var
 %type <ast> static_var class_statement trait_adaptation trait_precedence trait_alias
-%type <ast> absolute_trait_method_reference trait_method_reference property echo_expr
+%type <ast> absolute_trait_method_reference trait_method_reference property echo_expr echoln_expr
 %type <ast> new_expr anonymous_class class_name class_name_reference simple_variable
 %type <ast> internal_functions_in_yacc
 %type <ast> exit_expr scalar backticks_expr lexical_var function_call member_name property_name
@@ -244,7 +249,7 @@ static YYSIZE_T zend_yytnamerr(char*, const char*);
 %type <ast> encaps_var encaps_var_offset isset_variables
 %type <ast> top_statement_list use_declarations const_list inner_statement_list if_stmt
 %type <ast> alt_if_stmt for_exprs switch_case_list global_var_list static_var_list
-%type <ast> echo_expr_list unset_variables catch_name_list catch_list parameter_list class_statement_list
+%type <ast> echo_expr_list unset_variables catch_name_list catch_list parameter_list class_statement_list echoln_expr_list
 %type <ast> implements_list case_list if_stmt_without_else
 %type <ast> non_empty_parameter_list argument_list non_empty_argument_list property_list
 %type <ast> class_const_list class_const_decl name_list trait_adaptations method_body non_empty_for_exprs
@@ -273,7 +278,7 @@ reserved_non_modifiers:
 	| T_THROW | T_USE | T_INSTEADOF | T_GLOBAL | T_VAR | T_UNSET | T_ISSET | T_EMPTY | T_CONTINUE | T_GOTO
 	| T_FUNCTION | T_CONST | T_RETURN | T_PRINT | T_YIELD | T_LIST | T_SWITCH | T_ENDSWITCH | T_CASE | T_DEFAULT | T_BREAK
 	| T_ARRAY | T_CALLABLE | T_EXTENDS | T_IMPLEMENTS | T_NAMESPACE | T_TRAIT | T_INTERFACE | T_CLASS
-	| T_CLASS_C | T_TRAIT_C | T_FUNC_C | T_METHOD_C | T_LINE | T_FILE | T_DIR | T_NS_C
+	| T_CLASS_C | T_TRAIT_C | T_FUNC_C | T_METHOD_C | T_LINE | T_FILE | T_DIR | T_NS_C | T_ECHOLN | T_PRINTLN
 ;
 
 semi_reserved:
@@ -437,6 +442,7 @@ statement:
 	|	T_GLOBAL global_var_list ';'	{ $$ = $2; }
 	|	T_STATIC static_var_list ';'	{ $$ = $2; }
 	|	T_ECHO echo_expr_list ';'		{ $$ = $2; }
+	|	T_ECHOLN echoln_expr_list ';'	{ $$ = $2; }
 	|	T_INLINE_HTML { $$ = zend_ast_create(ZEND_AST_ECHO, $1); }
 	|	expr ';' { $$ = $1; }
 	|	T_UNSET '(' unset_variables ')' ';' { $$ = $3; }
@@ -839,7 +845,15 @@ echo_expr_list:
 	|	echo_expr { $$ = zend_ast_create_list(1, ZEND_AST_STMT_LIST, $1); }
 ;
 echo_expr:
-	expr { $$ = zend_ast_create(ZEND_AST_ECHO, $1); }
+	expr { $$ = zend_ast_create_ex(ZEND_AST_ECHO, WITHOUT_NEWLINE, $1); }
+;
+
+echoln_expr_list:
+		echo_expr_list ',' echoln_expr { $$ = zend_ast_list_add($1, $3); }
+	|	echoln_expr { $$ = zend_ast_create_list(1, ZEND_AST_STMT_LIST, $1); }
+;
+echoln_expr:
+	expr { $$ = zend_ast_create_ex(ZEND_AST_ECHO, WITH_NEWLINE, $1); }
 ;
 
 for_exprs:
@@ -973,7 +987,8 @@ expr_without_variable:
 	|	'@' expr			{ $$ = zend_ast_create(ZEND_AST_SILENCE, $2); }
 	|	scalar { $$ = $1; }
 	|	'`' backticks_expr '`' { $$ = zend_ast_create(ZEND_AST_SHELL_EXEC, $2); }
-	|	T_PRINT expr { $$ = zend_ast_create(ZEND_AST_PRINT, $2); }
+	|	T_PRINT expr { $$ = zend_ast_create_ex(ZEND_AST_PRINT, WITHOUT_NEWLINE, $2); }
+	|	T_PRINTLN expr { $$ = zend_ast_create_ex(ZEND_AST_PRINT, WITH_NEWLINE, $2); }
 	|	T_YIELD { $$ = zend_ast_create(ZEND_AST_YIELD, NULL, NULL); CG(extra_fn_flags) |= ZEND_ACC_GENERATOR; }
 	|	T_YIELD expr { $$ = zend_ast_create(ZEND_AST_YIELD, $2, NULL); CG(extra_fn_flags) |= ZEND_ACC_GENERATOR; }
 	|	T_YIELD expr T_DOUBLE_ARROW expr { $$ = zend_ast_create(ZEND_AST_YIELD, $4, $2); CG(extra_fn_flags) |= ZEND_ACC_GENERATOR; }

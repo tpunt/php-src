@@ -2693,6 +2693,10 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_ECHO_SPEC_CONST_HANDLER(ZEND_O
 		zend_string_release(str);
 	}
 
+	if (opline->extended_value) {
+		zend_write("\n", 1);
+	}
+
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
 }
 
@@ -33106,6 +33110,10 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_ECHO_SPEC_CV_HANDLER(ZEND_OPCO
 		zend_string_release(str);
 	}
 
+	if (opline->extended_value) {
+		zend_write("\n", 1);
+	}
+
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
 }
 
@@ -48301,6 +48309,10 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_ECHO_SPEC_TMPVAR_HANDLER(ZEND_
 			GET_OP1_UNDEF_CV(z, BP_VAR_R);
 		}
 		zend_string_release(str);
+	}
+
+	if (opline->extended_value) {
+		zend_write("\n", 1);
 	}
 
 	zval_ptr_dtor_nogc(free_op1);

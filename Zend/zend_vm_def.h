@@ -1376,6 +1376,10 @@ ZEND_VM_HANDLER(40, ZEND_ECHO, CONST|TMPVAR|CV, ANY)
 		zend_string_release(str);
 	}
 
+	if (opline->extended_value) {
+		zend_write("\n", 1);
+	}
+
 	FREE_OP1();
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
 }
