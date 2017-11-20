@@ -3482,16 +3482,23 @@ int zend_compile_func_chr(znode *result, zend_ast_list *args) /* {{{ */
 
 int zend_compile_func_ord(znode *result, zend_ast_list *args) /* {{{ */
 {
-	if (args->children == 1 &&
-	    args->child[0]->kind == ZEND_AST_ZVAL &&
+	if (args->children != 1) {
+		return FAILURE;
+	}
+
+	if (args->child[0]->kind == ZEND_AST_ZVAL &&
 	    Z_TYPE_P(zend_ast_get_zval(args->child[0])) == IS_STRING) {
 
 		result->op_type = IS_CONST;
 		ZVAL_LONG(&result->u.constant, (unsigned char)Z_STRVAL_P(zend_ast_get_zval(args->child[0]))[0]);
-		return SUCCESS;
 	} else {
-		return FAILURE;
+		znode arg_node;
+
+		zend_compile_expr(&arg_node, args->child[0]);
+		zend_emit_op_tmp(result, ZEND_ORD, &arg_node, NULL);
 	}
+
+	return SUCCESS;
 }
 /* }}} */
 

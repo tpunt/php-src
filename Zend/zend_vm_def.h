@@ -8886,3 +8886,25 @@ ZEND_VM_HELPER(zend_interrupt_helper, ANY, ANY)
 	}
 	ZEND_VM_CONTINUE();
 }
+
+ZEND_VM_HANDLER(198, ZEND_ORD, CONST|TMP|VAR|CV, UNUSED)
+{
+	USE_OPLINE
+	zend_free_op free_op1;
+	zval *op1;
+	zend_string *val;
+
+	SAVE_OPLINE();
+	op1 = GET_OP1_ZVAL_PTR_DEREF(BP_VAR_R);
+
+	if (!zend_parse_arg_str(op1, &val, 0)) {
+		ZVAL_NULL(EX_VAR(opline->result.var));
+		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(op1)));
+	} else {
+		ZVAL_LONG(EX_VAR(opline->result.var), (unsigned char) ZSTR_VAL(val)[0]);
+		zend_string_free(val);
+	}
+
+	FREE_OP1();
+	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
+}
