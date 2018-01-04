@@ -8231,19 +8231,21 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_ORD_SPEC_CONST_UNUSED_HANDLER(
 {
 	USE_OPLINE
 
-	zval *op1;
+	zval *op1, op1_copy;
 	zend_string *val;
 
 	SAVE_OPLINE();
 	op1 = EX_CONSTANT(opline->op1);
+	ZVAL_COPY(&op1_copy, op1);
 
-	if (!zend_parse_arg_str(op1, &val, 0)) {
+	if (!zend_parse_arg_str(&op1_copy, &val, 0)) {
 		ZVAL_NULL(EX_VAR(opline->result.var));
-		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(op1)));
+		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(&op1_copy)));
 	} else {
 		ZVAL_LONG(EX_VAR(opline->result.var), (unsigned char) ZSTR_VAL(val)[0]);
-		zend_string_free(val);
 	}
+
+	zval_ptr_dtor(&op1_copy);
 
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
 }
@@ -14820,19 +14822,21 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_ORD_SPEC_TMP_UNUSED_HANDLER(ZE
 {
 	USE_OPLINE
 	zend_free_op free_op1;
-	zval *op1;
+	zval *op1, op1_copy;
 	zend_string *val;
 
 	SAVE_OPLINE();
 	op1 = _get_zval_ptr_tmp(opline->op1.var, &free_op1 EXECUTE_DATA_CC);
+	ZVAL_COPY(&op1_copy, op1);
 
-	if (!zend_parse_arg_str(op1, &val, 0)) {
+	if (!zend_parse_arg_str(&op1_copy, &val, 0)) {
 		ZVAL_NULL(EX_VAR(opline->result.var));
-		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(op1)));
+		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(&op1_copy)));
 	} else {
 		ZVAL_LONG(EX_VAR(opline->result.var), (unsigned char) ZSTR_VAL(val)[0]);
-		zend_string_free(val);
 	}
+
+	zval_ptr_dtor(&op1_copy);
 
 	zval_ptr_dtor_nogc(free_op1);
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
@@ -21883,19 +21887,21 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_ORD_SPEC_VAR_UNUSED_HANDLER(ZE
 {
 	USE_OPLINE
 	zend_free_op free_op1;
-	zval *op1;
+	zval *op1, op1_copy;
 	zend_string *val;
 
 	SAVE_OPLINE();
 	op1 = _get_zval_ptr_var_deref(opline->op1.var, &free_op1 EXECUTE_DATA_CC);
+	ZVAL_COPY(&op1_copy, op1);
 
-	if (!zend_parse_arg_str(op1, &val, 0)) {
+	if (!zend_parse_arg_str(&op1_copy, &val, 0)) {
 		ZVAL_NULL(EX_VAR(opline->result.var));
-		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(op1)));
+		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(&op1_copy)));
 	} else {
 		ZVAL_LONG(EX_VAR(opline->result.var), (unsigned char) ZSTR_VAL(val)[0]);
-		zend_string_free(val);
 	}
+
+	zval_ptr_dtor(&op1_copy);
 
 	zval_ptr_dtor_nogc(free_op1);
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
@@ -41154,19 +41160,21 @@ static ZEND_OPCODE_HANDLER_RET ZEND_FASTCALL ZEND_ORD_SPEC_CV_UNUSED_HANDLER(ZEN
 {
 	USE_OPLINE
 
-	zval *op1;
+	zval *op1, op1_copy;
 	zend_string *val;
 
 	SAVE_OPLINE();
 	op1 = _get_zval_ptr_cv_deref_BP_VAR_R(opline->op1.var EXECUTE_DATA_CC);
+	ZVAL_COPY(&op1_copy, op1);
 
-	if (!zend_parse_arg_str(op1, &val, 0)) {
+	if (!zend_parse_arg_str(&op1_copy, &val, 0)) {
 		ZVAL_NULL(EX_VAR(opline->result.var));
-		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(op1)));
+		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(&op1_copy)));
 	} else {
 		ZVAL_LONG(EX_VAR(opline->result.var), (unsigned char) ZSTR_VAL(val)[0]);
-		zend_string_free(val);
 	}
+
+	zval_ptr_dtor(&op1_copy);
 
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
 }

@@ -3482,7 +3482,7 @@ int zend_compile_func_chr(znode *result, zend_ast_list *args) /* {{{ */
 
 int zend_compile_func_ord(znode *result, zend_ast_list *args) /* {{{ */
 {
-	if (args->children != 1) {
+	if (args->children != 1 || args->child[0]->kind == ZEND_AST_UNPACK) {
 		return FAILURE;
 	}
 

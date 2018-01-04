@@ -8891,19 +8891,21 @@ ZEND_VM_HANDLER(198, ZEND_ORD, CONST|TMP|VAR|CV, UNUSED)
 {
 	USE_OPLINE
 	zend_free_op free_op1;
-	zval *op1;
+	zval *op1, op1_copy;
 	zend_string *val;
 
 	SAVE_OPLINE();
 	op1 = GET_OP1_ZVAL_PTR_DEREF(BP_VAR_R);
+	ZVAL_COPY(&op1_copy, op1);
 
-	if (!zend_parse_arg_str(op1, &val, 0)) {
+	if (!zend_parse_arg_str(&op1_copy, &val, 0)) {
 		ZVAL_NULL(EX_VAR(opline->result.var));
-		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(op1)));
+		zend_error(E_WARNING, "ord() expects parameter 1 to be string, %s given", zend_get_type_by_const(Z_TYPE_P(&op1_copy)));
 	} else {
 		ZVAL_LONG(EX_VAR(opline->result.var), (unsigned char) ZSTR_VAL(val)[0]);
-		zend_string_free(val);
 	}
+
+	zval_ptr_dtor(&op1_copy);
 
 	FREE_OP1();
 	ZEND_VM_NEXT_OPCODE_CHECK_EXCEPTION();
